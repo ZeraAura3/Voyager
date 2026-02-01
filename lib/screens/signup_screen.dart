@@ -18,8 +18,16 @@ class _SignupScreenState extends State<SignupScreen> {
   final _phoneController = TextEditingController();
   final _passwordController = TextEditingController();
   final _confirmPasswordController = TextEditingController();
+
+  // Driver-specific controllers
+  final _driverEmailController = TextEditingController();
+  final _licenseNumberController = TextEditingController();
+  final _vehicleModelController = TextEditingController();
+  final _vehicleNumberController = TextEditingController();
+
   bool _isLoading = false;
   String? _selectedGender;
+  String _selectedRole = 'student'; // 'student' or 'driver'
 
   Future<void> _signup() async {
     if (!_formKey.currentState!.validate()) return;
@@ -38,36 +46,69 @@ class _SignupScreenState extends State<SignupScreen> {
     setState(() => _isLoading = true);
 
     try {
+      // Create email for authentication
+      String authEmail = _selectedRole == 'student'
+          ? _emailController.text.trim()
+          : _driverEmailController.text.trim();
+
       UserCredential userCredential =
           await FirebaseAuth.instance.createUserWithEmailAndPassword(
-        email: _emailController.text.trim(),
+        email: authEmail,
         password: _passwordController.text,
       );
 
-      await FirebaseFirestore.instance
-          .collection('users')
-          .doc(userCredential.user!.uid)
-          .set({
-        'fullName': _nameController.text.trim(),
-        'email': _emailController.text.trim(),
-        'studentId': _studentIdController.text.trim(),
-        'phone': _phoneController.text.trim(),
-        if (_selectedGender != null) 'gender': _selectedGender,
-        'rating': 5.0,
-        'totalRides': 0,
-        'moneySaved': 0,
-        'createdAt': FieldValue.serverTimestamp(),
-      });
+      // Store in appropriate collection based on role
+      if (_selectedRole == 'student') {
+        await FirebaseFirestore.instance
+            .collection('students')
+            .doc(userCredential.user!.uid)
+            .set({
+          'fullName': _nameController.text.trim(),
+          'email': _emailController.text.trim(),
+          'studentId': _studentIdController.text.trim(),
+          'phone': _phoneController.text.trim(),
+          'role': 'student',
+          if (_selectedGender != null) 'gender': _selectedGender,
+          'rating': 5.0,
+          'totalRides': 0,
+          'moneySaved': 0,
+          'createdAt': FieldValue.serverTimestamp(),
+        });
+      } else {
+        // Driver
+        await FirebaseFirestore.instance
+            .collection('drivers')
+            .doc(userCredential.user!.uid)
+            .set({
+          'fullName': _nameController.text.trim(),
+          'email': _driverEmailController.text.trim(),
+          'licenseNumber': _licenseNumberController.text.trim(),
+          'vehicleModel': _vehicleModelController.text.trim(),
+          'vehicleNumber': _vehicleNumberController.text.trim(),
+          'phone': _phoneController.text.trim(),
+          'role': 'driver',
+          if (_selectedGender != null) 'gender': _selectedGender,
+          'rating': 5.0,
+          'totalRides': 0,
+          'seatsAvailable': 4,
+          'createdAt': FieldValue.serverTimestamp(),
+        });
+      }
 
       if (mounted) {
-        Navigator.pushReplacementNamed(context, '/home');
+        // Redirect based on role
+        if (_selectedRole == 'student') {
+          Navigator.pushReplacementNamed(context, '/home');
+        } else {
+          Navigator.pushReplacementNamed(context, '/driver-home');
+        }
       }
     } on FirebaseAuthException catch (e) {
       String message = 'An error occurred';
       if (e.code == 'weak-password') {
         message = 'The password is too weak';
       } else if (e.code == 'email-already-in-use') {
-        message = 'An account already exists for this email';
+        message = 'An account already exists for this email/phone';
       }
 
       if (mounted) {
@@ -111,7 +152,7 @@ class _SignupScreenState extends State<SignupScreen> {
                             borderRadius: BorderRadius.circular(16),
                             boxShadow: [
                               BoxShadow(
-                                color: Colors.black.withOpacity(0.06),
+                                color: Colors.black.withValues(alpha: 0.06),
                                 blurRadius: 8,
                                 offset: const Offset(0, 4),
                               ),
@@ -129,7 +170,8 @@ class _SignupScreenState extends State<SignupScreen> {
                           style: TextStyle(
                             fontSize: 26,
                             fontWeight: FontWeight.bold,
-                            color: Theme.of(context).textTheme.titleLarge?.color,
+                            color:
+                                Theme.of(context).textTheme.titleLarge?.color,
                           ),
                         ),
                         const SizedBox(height: 8),
@@ -142,6 +184,99 @@ class _SignupScreenState extends State<SignupScreen> {
                           textAlign: TextAlign.center,
                         ),
                         const SizedBox(height: 24),
+
+                        // Role Selection
+                        Container(
+                          padding: const EdgeInsets.all(4),
+                          decoration: BoxDecoration(
+                            color: Colors.grey[200],
+                            borderRadius: BorderRadius.circular(12),
+                          ),
+                          child: Row(
+                            children: [
+                              Expanded(
+                                child: GestureDetector(
+                                  onTap: () =>
+                                      setState(() => _selectedRole = 'student'),
+                                  child: Container(
+                                    padding: const EdgeInsets.symmetric(
+                                        vertical: 12),
+                                    decoration: BoxDecoration(
+                                      color: _selectedRole == 'student'
+                                          ? const Color(0xFF00B25E)
+                                          : Colors.transparent,
+                                      borderRadius: BorderRadius.circular(10),
+                                    ),
+                                    child: Row(
+                                      mainAxisAlignment:
+                                          MainAxisAlignment.center,
+                                      children: [
+                                        Icon(
+                                          Icons.school,
+                                          color: _selectedRole == 'student'
+                                              ? Colors.white
+                                              : Colors.grey[600],
+                                          size: 20,
+                                        ),
+                                        const SizedBox(width: 8),
+                                        Text(
+                                          'Student',
+                                          style: TextStyle(
+                                            fontWeight: FontWeight.bold,
+                                            color: _selectedRole == 'student'
+                                                ? Colors.white
+                                                : Colors.grey[600],
+                                          ),
+                                        ),
+                                      ],
+                                    ),
+                                  ),
+                                ),
+                              ),
+                              Expanded(
+                                child: GestureDetector(
+                                  onTap: () =>
+                                      setState(() => _selectedRole = 'driver'),
+                                  child: Container(
+                                    padding: const EdgeInsets.symmetric(
+                                        vertical: 12),
+                                    decoration: BoxDecoration(
+                                      color: _selectedRole == 'driver'
+                                          ? const Color(0xFF00B25E)
+                                          : Colors.transparent,
+                                      borderRadius: BorderRadius.circular(10),
+                                    ),
+                                    child: Row(
+                                      mainAxisAlignment:
+                                          MainAxisAlignment.center,
+                                      children: [
+                                        Icon(
+                                          Icons.local_taxi,
+                                          color: _selectedRole == 'driver'
+                                              ? Colors.white
+                                              : Colors.grey[600],
+                                          size: 20,
+                                        ),
+                                        const SizedBox(width: 8),
+                                        Text(
+                                          'Driver',
+                                          style: TextStyle(
+                                            fontWeight: FontWeight.bold,
+                                            color: _selectedRole == 'driver'
+                                                ? Colors.white
+                                                : Colors.grey[600],
+                                          ),
+                                        ),
+                                      ],
+                                    ),
+                                  ),
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                        const SizedBox(height: 24),
+
                         _buildTextField(
                           controller: _nameController,
                           label: 'Full Name',
@@ -196,39 +331,108 @@ class _SignupScreenState extends State<SignupScreen> {
                           ],
                         ),
                         const SizedBox(height: 16),
-                        _buildTextField(
-                          controller: _emailController,
-                          label: 'Student Email',
-                          hint: 'your.email@iitmandi.ac.in',
-                          icon: Icons.email,
-                          keyboardType: TextInputType.emailAddress,
-                          validator: (value) {
-                            if (value == null || value.isEmpty) {
-                              return 'Please enter your email';
-                            }
-                            if (!value.contains('@')) {
-                              return 'Please enter a valid email';
-                            }
-                            if (!value.toLowerCase().endsWith('@iitmandi.ac.in')) {
-                              return 'Only @iitmandi.ac.in emails are allowed';
-                            }
-                            return null;
-                          },
-                        ),
-                        const SizedBox(height: 16),
-                        _buildTextField(
-                          controller: _studentIdController,
-                          label: 'Student ID',
-                          hint: 'B20001',
-                          icon: Icons.badge,
-                          validator: (value) {
-                            if (value == null || value.isEmpty) {
-                              return 'Please enter your student ID';
-                            }
-                            return null;
-                          },
-                        ),
-                        const SizedBox(height: 16),
+
+                        // Conditional fields based on role
+                        if (_selectedRole == 'student') ...[
+                          _buildTextField(
+                            controller: _emailController,
+                            label: 'Student Email',
+                            hint: 'your.email@iitmandi.ac.in',
+                            icon: Icons.email,
+                            keyboardType: TextInputType.emailAddress,
+                            validator: (value) {
+                              if (value == null || value.isEmpty) {
+                                return 'Please enter your email';
+                              }
+                              if (!value.contains('@')) {
+                                return 'Please enter a valid email';
+                              }
+                              if (!value
+                                      .toLowerCase()
+                                      .endsWith('@students.iitmandi.ac.in') &&
+                                  !value
+                                      .toLowerCase()
+                                      .endsWith('@iitmandi.ac.in')) {
+                                return 'Only iitmandi.ac.in emails are allowed';
+                              }
+                              return null;
+                            },
+                          ),
+                          const SizedBox(height: 16),
+                          _buildTextField(
+                            controller: _studentIdController,
+                            label: 'Student ID',
+                            hint: 'B20001',
+                            icon: Icons.badge,
+                            validator: (value) {
+                              if (value == null || value.isEmpty) {
+                                return 'Please enter your student ID';
+                              }
+                              return null;
+                            },
+                          ),
+                          const SizedBox(height: 16),
+                        ],
+
+                        if (_selectedRole == 'driver') ...[
+                          _buildTextField(
+                            controller: _driverEmailController,
+                            label: 'Email',
+                            hint: 'your.email@example.com',
+                            icon: Icons.email,
+                            keyboardType: TextInputType.emailAddress,
+                            validator: (value) {
+                              if (value == null || value.isEmpty) {
+                                return 'Please enter your email';
+                              }
+                              if (!value.contains('@')) {
+                                return 'Please enter a valid email';
+                              }
+                              return null;
+                            },
+                          ),
+                          const SizedBox(height: 16),
+                          _buildTextField(
+                            controller: _licenseNumberController,
+                            label: 'License Number',
+                            hint: 'DL-1234567890',
+                            icon: Icons.credit_card,
+                            validator: (value) {
+                              if (value == null || value.isEmpty) {
+                                return 'Please enter your license number';
+                              }
+                              return null;
+                            },
+                          ),
+                          const SizedBox(height: 16),
+                          _buildTextField(
+                            controller: _vehicleModelController,
+                            label: 'Vehicle Model',
+                            hint: 'Toyota Camry 2020',
+                            icon: Icons.directions_car,
+                            validator: (value) {
+                              if (value == null || value.isEmpty) {
+                                return 'Please enter your vehicle model';
+                              }
+                              return null;
+                            },
+                          ),
+                          const SizedBox(height: 16),
+                          _buildTextField(
+                            controller: _vehicleNumberController,
+                            label: 'Vehicle Number',
+                            hint: 'ABC-1234',
+                            icon: Icons.confirmation_number,
+                            validator: (value) {
+                              if (value == null || value.isEmpty) {
+                                return 'Please enter your vehicle number';
+                              }
+                              return null;
+                            },
+                          ),
+                          const SizedBox(height: 16),
+                        ],
+
                         _buildTextField(
                           controller: _phoneController,
                           label: 'Phone Number',
@@ -279,10 +483,12 @@ class _SignupScreenState extends State<SignupScreen> {
                             ),
                           ),
                           validator: (value) {
-                            if (value == null || value.isEmpty)
+                            if (value == null || value.isEmpty) {
                               return 'Please confirm your password';
-                            if (value != _passwordController.text)
+                            }
+                            if (value != _passwordController.text) {
                               return 'Passwords do not match';
+                            }
                             return null;
                           },
                         ),
@@ -324,7 +530,11 @@ class _SignupScreenState extends State<SignupScreen> {
                           children: [
                             Text(
                               'Already have an account? ',
-                              style: TextStyle(color: Theme.of(context).textTheme.bodySmall?.color),
+                              style: TextStyle(
+                                  color: Theme.of(context)
+                                      .textTheme
+                                      .bodySmall
+                                      ?.color),
                             ),
                             GestureDetector(
                               onTap: () {
@@ -393,6 +603,10 @@ class _SignupScreenState extends State<SignupScreen> {
     _phoneController.dispose();
     _passwordController.dispose();
     _confirmPasswordController.dispose();
+    _driverEmailController.dispose();
+    _licenseNumberController.dispose();
+    _vehicleModelController.dispose();
+    _vehicleNumberController.dispose();
     super.dispose();
   }
 }

@@ -1,5 +1,151 @@
 // lib/models/user_model.dart
 
+// Base User class for common fields
+abstract class BaseUser {
+  final String uid;
+  final String fullName;
+  final String phone;
+  final String role; // 'student' or 'driver'
+  final double rating;
+  final int totalRides;
+  final DateTime? createdAt;
+  final String? profileImageUrl;
+
+  BaseUser({
+    required this.uid,
+    required this.fullName,
+    required this.phone,
+    required this.role,
+    this.rating = 5.0,
+    this.totalRides = 0,
+    this.createdAt,
+    this.profileImageUrl,
+  });
+
+  Map<String, dynamic> toMap();
+}
+
+// Student Model
+class StudentModel extends BaseUser {
+  final String email;
+  final String studentId;
+  final double moneySaved;
+
+  StudentModel({
+    required super.uid,
+    required super.fullName,
+    required this.email,
+    required this.studentId,
+    required super.phone,
+    super.rating = 5.0,
+    super.totalRides = 0,
+    this.moneySaved = 0.0,
+    super.createdAt,
+    super.profileImageUrl,
+  }) : super(role: 'student');
+
+  @override
+  Map<String, dynamic> toMap() {
+    return {
+      'uid': uid,
+      'fullName': fullName,
+      'email': email,
+      'studentId': studentId,
+      'phone': phone,
+      'role': role,
+      'rating': rating,
+      'totalRides': totalRides,
+      'moneySaved': moneySaved,
+      'createdAt': createdAt?.toIso8601String(),
+      'profileImageUrl': profileImageUrl,
+    };
+  }
+
+  factory StudentModel.fromMap(Map<String, dynamic> map, String uid) {
+    return StudentModel(
+      uid: uid,
+      fullName: map['fullName'] ?? '',
+      email: map['email'] ?? '',
+      studentId: map['studentId'] ?? '',
+      phone: map['phone'] ?? '',
+      rating: (map['rating'] ?? 5.0).toDouble(),
+      totalRides: map['totalRides'] ?? 0,
+      moneySaved: (map['moneySaved'] ?? 0.0).toDouble(),
+      createdAt:
+          map['createdAt'] != null ? DateTime.parse(map['createdAt']) : null,
+      profileImageUrl: map['profileImageUrl'],
+    );
+  }
+
+  @override
+  String toString() {
+    return 'StudentModel(uid: $uid, fullName: $fullName, email: $email, studentId: $studentId, rating: $rating)';
+  }
+}
+
+// Driver Model
+class DriverModel extends BaseUser {
+  final String licenseNumber;
+  final String vehicleModel;
+  final String vehicleNumber;
+  final int seatsAvailable;
+
+  DriverModel({
+    required super.uid,
+    required super.fullName,
+    required this.licenseNumber,
+    required this.vehicleModel,
+    required this.vehicleNumber,
+    required super.phone,
+    this.seatsAvailable = 4,
+    super.rating = 5.0,
+    super.totalRides = 0,
+    super.createdAt,
+    super.profileImageUrl,
+  }) : super(role: 'driver');
+
+  @override
+  Map<String, dynamic> toMap() {
+    return {
+      'uid': uid,
+      'fullName': fullName,
+      'licenseNumber': licenseNumber,
+      'vehicleModel': vehicleModel,
+      'vehicleNumber': vehicleNumber,
+      'phone': phone,
+      'role': role,
+      'rating': rating,
+      'totalRides': totalRides,
+      'seatsAvailable': seatsAvailable,
+      'createdAt': createdAt?.toIso8601String(),
+      'profileImageUrl': profileImageUrl,
+    };
+  }
+
+  factory DriverModel.fromMap(Map<String, dynamic> map, String uid) {
+    return DriverModel(
+      uid: uid,
+      fullName: map['fullName'] ?? '',
+      licenseNumber: map['licenseNumber'] ?? '',
+      vehicleModel: map['vehicleModel'] ?? '',
+      vehicleNumber: map['vehicleNumber'] ?? '',
+      phone: map['phone'] ?? '',
+      rating: (map['rating'] ?? 5.0).toDouble(),
+      totalRides: map['totalRides'] ?? 0,
+      seatsAvailable: map['seatsAvailable'] ?? 4,
+      createdAt:
+          map['createdAt'] != null ? DateTime.parse(map['createdAt']) : null,
+      profileImageUrl: map['profileImageUrl'],
+    );
+  }
+
+  @override
+  String toString() {
+    return 'DriverModel(uid: $uid, fullName: $fullName, vehicle: $vehicleModel, rating: $rating)';
+  }
+}
+
+// For backward compatibility - keeping old UserModel
 class UserModel {
   final String uid;
   final String fullName;
@@ -27,7 +173,6 @@ class UserModel {
     this.isDriver = false,
   });
 
-  // Convert UserModel to Map for Firestore
   Map<String, dynamic> toMap() {
     return {
       'uid': uid,
@@ -44,7 +189,6 @@ class UserModel {
     };
   }
 
-  // Create UserModel from Firestore Map
   factory UserModel.fromMap(Map<String, dynamic> map, String uid) {
     return UserModel(
       uid: uid,
@@ -62,7 +206,6 @@ class UserModel {
     );
   }
 
-  // Create a copy of UserModel with updated fields
   UserModel copyWith({
     String? uid,
     String? fullName,

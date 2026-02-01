@@ -1,6 +1,7 @@
 // screens/login_screen.dart
 import 'package:flutter/material.dart';
 import 'package:firebase_auth/firebase_auth.dart';
+import 'package:cloud_firestore/cloud_firestore.dart';
 
 class LoginScreen extends StatefulWidget {
   const LoginScreen({super.key});
@@ -23,13 +24,50 @@ class _LoginScreenState extends State<LoginScreen> {
     setState(() => _isLoading = true);
 
     try {
-      await FirebaseAuth.instance.signInWithEmailAndPassword(
+      UserCredential userCredential =
+          await FirebaseAuth.instance.signInWithEmailAndPassword(
         email: _emailController.text.trim(),
         password: _passwordController.text,
       );
 
+      // Check if user is a student or driver
+      String uid = userCredential.user!.uid;
+
+      // Check in students collection first
+      DocumentSnapshot studentDoc = await FirebaseFirestore.instance
+          .collection('students')
+          .doc(uid)
+          .get();
+
+      if (studentDoc.exists) {
+        // User is a student
+        if (mounted) {
+          Navigator.pushReplacementNamed(context, '/home');
+        }
+        return;
+      }
+
+      // Check in drivers collection
+      DocumentSnapshot driverDoc =
+          await FirebaseFirestore.instance.collection('drivers').doc(uid).get();
+
+      if (driverDoc.exists) {
+        // User is a driver
+        if (mounted) {
+          Navigator.pushReplacementNamed(context, '/driver-home');
+        }
+        return;
+      }
+
+      // If not found in either collection, sign out and show error
+      await FirebaseAuth.instance.signOut();
       if (mounted) {
-        Navigator.pushReplacementNamed(context, '/home');
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('User data not found. Please sign up again.'),
+            backgroundColor: Colors.red,
+          ),
+        );
       }
     } on FirebaseAuthException catch (e) {
       String message = 'An error occurred';
@@ -244,7 +282,7 @@ class _LoginScreenState extends State<LoginScreen> {
                           controller: _emailController,
                           keyboardType: TextInputType.emailAddress,
                           decoration: InputDecoration(
-                            labelText: 'Student Email',
+                            labelText: 'Email',
                             hintText: 'your.email@university.edu',
                             prefixIcon: const Icon(Icons.email),
                             border: OutlineInputBorder(

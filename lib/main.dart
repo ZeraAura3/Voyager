@@ -6,19 +6,20 @@ import 'firebase_options.dart';
 import 'screens/login_screen.dart';
 import 'screens/signup_screen.dart';
 import 'screens/home_screen.dart';
+import 'screens/driver_home_screen.dart';
 import 'theme/theme_provider.dart';
 import 'theme/app_theme.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
-  
+
   await Firebase.initializeApp(
     options: DefaultFirebaseOptions.currentPlatform,
   );
-  
+
   // Load theme preference before starting the app
   final themeProvider = await ThemeProvider.create();
-  
+
   runApp(
     ChangeNotifierProvider.value(
       value: themeProvider,
@@ -45,6 +46,7 @@ class Voyager extends StatelessWidget {
             '/login': (context) => const LoginScreen(),
             '/signup': (context) => const SignupScreen(),
             '/home': (context) => const HomeScreen(),
+            '/driver-home': (context) => const DriverHomeScreen(),
           },
         );
       },
