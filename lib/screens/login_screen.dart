@@ -2,6 +2,7 @@
 import 'package:flutter/material.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
+import '../utils/user_helper.dart';
 
 class LoginScreen extends StatefulWidget {
   const LoginScreen({super.key});
@@ -40,6 +41,17 @@ class _LoginScreenState extends State<LoginScreen> {
           .get();
 
       if (studentDoc.exists) {
+        // Sync to Supabase
+        final data = studentDoc.data() as Map<String, dynamic>;
+        await UserHelper.syncUserToSupabase(
+          firebaseUid: uid,
+          email: data['email'] ?? '',
+          fullName: data['fullName'] ?? 'Unknown',
+          role: 'student',
+          rollNo: data['studentId'],
+          phone: data['phone'],
+        );
+
         // User is a student
         if (mounted) {
           Navigator.pushReplacementNamed(context, '/home');
@@ -52,6 +64,16 @@ class _LoginScreenState extends State<LoginScreen> {
           await FirebaseFirestore.instance.collection('drivers').doc(uid).get();
 
       if (driverDoc.exists) {
+        // Sync to Supabase
+        final data = driverDoc.data() as Map<String, dynamic>;
+        await UserHelper.syncUserToSupabase(
+          firebaseUid: uid,
+          email: data['email'] ?? '',
+          fullName: data['fullName'] ?? 'Unknown',
+          role: 'driver',
+          phone: data['phone'],
+        );
+
         // User is a driver
         if (mounted) {
           Navigator.pushReplacementNamed(context, '/driver-home');

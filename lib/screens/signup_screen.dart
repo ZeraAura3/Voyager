@@ -3,6 +3,8 @@ import 'package:flutter/material.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 
+import 'package:voyager/utils/user_helper.dart';
+
 class SignupScreen extends StatefulWidget {
   const SignupScreen({super.key});
 
@@ -94,6 +96,18 @@ class _SignupScreenState extends State<SignupScreen> {
           'createdAt': FieldValue.serverTimestamp(),
         });
       }
+
+      // Sync to Supabase
+      await UserHelper.syncUserToSupabase(
+        firebaseUid: userCredential.user!.uid,
+        email: authEmail,
+        fullName: _nameController.text.trim(),
+        role: _selectedRole,
+        rollNo: _selectedRole == 'student'
+            ? _studentIdController.text.trim()
+            : null,
+        phone: _phoneController.text.trim(),
+      );
 
       if (mounted) {
         // Redirect based on role

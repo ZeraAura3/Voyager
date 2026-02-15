@@ -53,7 +53,7 @@ class _RequestsScreenState extends State<RequestsScreen>
                   children: [
                     _buildTabButton('Join (2)', 0),
                     const SizedBox(width: 12),
-                    _buildTabButton('Swaps (1)', 1),
+                    _buildTabButton('Rejected (1)', 1),
                   ],
                 ),
               ],
@@ -64,7 +64,7 @@ class _RequestsScreenState extends State<RequestsScreen>
               controller: _tabController,
               children: [
                 _buildJoinRequestsList(),
-                _buildSwapRequestsList(),
+                _buildRejectedRequestsList(),
               ],
             ),
           ),
@@ -140,8 +140,8 @@ class _RequestsScreenState extends State<RequestsScreen>
     );
   }
 
-  Widget _buildSwapRequestsList() {
-    final swapRequests = [
+  Widget _buildRejectedRequestsList() {
+    final rejectedRequests = [
       {
         'name': 'Parth Modi',
         'initials': 'PM',
@@ -151,15 +151,17 @@ class _RequestsScreenState extends State<RequestsScreen>
         'proposedFrom': 'North Campus',
         'proposedTo': 'South Campus',
         'proposedTime': 'Today • 4:00 PM',
+        'rejectionReason': 'Time conflict',
+        'rejectedAt': 'Today • 2:30 PM',
       },
     ];
 
     return ListView.builder(
       padding: const EdgeInsets.all(16),
-      itemCount: swapRequests.length,
+      itemCount: rejectedRequests.length,
       itemBuilder: (context, index) {
-        final request = swapRequests[index];
-        return _buildSwapRequestCard(request);
+        final request = rejectedRequests[index];
+        return _buildRejectedRequestCard(request);
       },
     );
   }
@@ -312,7 +314,7 @@ class _RequestsScreenState extends State<RequestsScreen>
     super.dispose();
   }
 
-  Widget _buildSwapRequestCard(Map<String, dynamic> request) {
+  Widget _buildRejectedRequestCard(Map<String, dynamic> request) {
     return Container(
       margin: const EdgeInsets.only(bottom: 16),
       padding: const EdgeInsets.all(16),
@@ -330,7 +332,7 @@ class _RequestsScreenState extends State<RequestsScreen>
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          // User Info
+          // User Info & Status Badge
           Row(
             children: [
               Container(
@@ -344,13 +346,42 @@ class _RequestsScreenState extends State<RequestsScreen>
               ),
               const SizedBox(width: 12),
               Expanded(
-                child: Text(
-                  request['name'],
-                  style: TextStyle(
-                    fontSize: 16,
-                    fontWeight: FontWeight.bold,
-                    color: Theme.of(context).textTheme.bodyLarge?.color,
-                  ),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      request['name'],
+                      style: TextStyle(
+                        fontSize: 16,
+                        fontWeight: FontWeight.bold,
+                        color: Theme.of(context).textTheme.bodyLarge?.color,
+                      ),
+                    ),
+                    const SizedBox(height: 4),
+                    Container(
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 8, vertical: 4),
+                      decoration: BoxDecoration(
+                        color: Colors.red.withOpacity(0.1),
+                        borderRadius: BorderRadius.circular(8),
+                      ),
+                      child: const Text(
+                        'Rejected',
+                        style: TextStyle(
+                          fontSize: 12,
+                          fontWeight: FontWeight.w600,
+                          color: Colors.red,
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              Text(
+                request['rejectedAt'] ?? '',
+                style: TextStyle(
+                  fontSize: 12,
+                  color: Colors.grey[600],
                 ),
               ),
             ],
@@ -359,7 +390,7 @@ class _RequestsScreenState extends State<RequestsScreen>
 
           // Current Ride
           Text(
-            'CURRENT RIDE',
+            'YOUR TICKET',
             style: TextStyle(
               fontSize: 11,
               fontWeight: FontWeight.w600,
@@ -391,6 +422,8 @@ class _RequestsScreenState extends State<RequestsScreen>
                 const SizedBox(height: 4),
                 Row(
                   children: [
+                    const Icon(Icons.access_time, size: 14, color: Colors.grey),
+                    const SizedBox(width: 4),
                     Text(
                       request['currentTime'],
                       style: TextStyle(
@@ -410,7 +443,7 @@ class _RequestsScreenState extends State<RequestsScreen>
               padding: EdgeInsets.symmetric(vertical: 8),
               child: Icon(
                 Icons.swap_vert,
-                color: Color(0xFF00B25E),
+                color: Colors.red,
                 size: 24,
               ),
             ),
@@ -418,7 +451,7 @@ class _RequestsScreenState extends State<RequestsScreen>
 
           // Proposed Ride
           Text(
-            'PROPOSED RIDE',
+            'REQUESTED TICKET',
             style: TextStyle(
               fontSize: 11,
               fontWeight: FontWeight.w600,
@@ -450,6 +483,8 @@ class _RequestsScreenState extends State<RequestsScreen>
                 const SizedBox(height: 4),
                 Row(
                   children: [
+                    const Icon(Icons.access_time, size: 14, color: Colors.grey),
+                    const SizedBox(width: 4),
                     Text(
                       request['proposedTime'],
                       style: TextStyle(
@@ -462,63 +497,43 @@ class _RequestsScreenState extends State<RequestsScreen>
               ],
             ),
           ),
-          const SizedBox(height: 16),
 
-          // Action Buttons
-          Row(
-            children: [
-              Expanded(
-                child: SizedBox(
-                  height: 44,
-                  child: ElevatedButton(
-                    onPressed: () {
-                      // TODO: Approve swap
-                    },
-                    style: ElevatedButton.styleFrom(
-                      backgroundColor: const Color(0xFF00B25E),
-                      shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(12),
-                      ),
-                      elevation: 0,
-                    ),
-                    child: const Text(
-                      'Approve Swap',
-                      style: TextStyle(
-                        fontSize: 15,
-                        fontWeight: FontWeight.w600,
-                        color: Colors.white,
-                      ),
-                    ),
-                  ),
+          // Rejection Reason
+          if (request['rejectionReason'] != null) ...[
+            const SizedBox(height: 16),
+            Container(
+              width: double.infinity,
+              padding: const EdgeInsets.all(12),
+              decoration: BoxDecoration(
+                color: Colors.red.withOpacity(0.05),
+                borderRadius: BorderRadius.circular(8),
+                border: Border.all(
+                  color: Colors.red.withOpacity(0.2),
                 ),
               ),
-              const SizedBox(width: 12),
-              Expanded(
-                child: SizedBox(
-                  height: 44,
-                  child: OutlinedButton(
-                    onPressed: () {
-                      // TODO: Reject swap
-                    },
-                    style: OutlinedButton.styleFrom(
-                      side: BorderSide(color: Theme.of(context).dividerColor),
-                      shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(12),
-                      ),
-                    ),
-                    child: Text(
-                      'Reject',
-                      style: TextStyle(
-                        fontSize: 15,
-                        fontWeight: FontWeight.w600,
-                        color: Theme.of(context).textTheme.bodyMedium?.color,
-                      ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Text(
+                    'Reason for rejection:',
+                    style: TextStyle(
+                      fontSize: 12,
+                      fontWeight: FontWeight.w600,
+                      color: Colors.red,
                     ),
                   ),
-                ),
+                  const SizedBox(height: 4),
+                  Text(
+                    request['rejectionReason'],
+                    style: TextStyle(
+                      fontSize: 14,
+                      color: Theme.of(context).textTheme.bodyMedium?.color,
+                    ),
+                  ),
+                ],
               ),
-            ],
-          ),
+            ),
+          ],
         ],
       ),
     );

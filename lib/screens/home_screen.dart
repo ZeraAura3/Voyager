@@ -61,7 +61,7 @@ class _HomeScreenState extends State<HomeScreen> {
           BottomNavigationBarItem(
             icon: Icon(Icons.swap_horiz_outlined),
             activeIcon: Icon(Icons.swap_horiz),
-            label: 'Swaps',
+            label: 'Trades',
           ),
           BottomNavigationBarItem(
             icon: Icon(Icons.local_taxi_outlined),
