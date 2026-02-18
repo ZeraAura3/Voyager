@@ -1,5 +1,6 @@
 // screens/cab_services_screen.dart
 import 'package:flutter/material.dart';
+import 'package:url_launcher/url_launcher.dart';
 
 class CabServicesScreen extends StatelessWidget {
   const CabServicesScreen({super.key});
@@ -8,20 +9,22 @@ class CabServicesScreen extends StatelessWidget {
   Widget build(BuildContext context) {
     final cabServices = [
       {
-        'name': 'Ajay',
+        'name': 'Arendra',
         'rating': 4.9,
         'reviews': 156,
         'route': 'North Campus — Mandi',
         'price': '₹900 - ₹1000',
-        'phone': '+91 98765 43210',
+        'phone': '+91 9999802132',
+        'whatsapp': '+91 9999802132',
       },
       {
-        'name': 'Ramesh',
+        'name': 'Saatvik',
         'rating': 4.8,
         'reviews': 203,
         'route': 'South Campus — Mandi',
         'price': '₹800 - ₹900',
-        'phone': '+91 98765 43211',
+        'phone': '+91 7359290040',
+        'whatsapp': '+91 7359290040',
       },
       {
         'name': 'Ankit',
@@ -29,7 +32,8 @@ class CabServicesScreen extends StatelessWidget {
         'reviews': 189,
         'route': 'Mandi — North Campus',
         'price': '₹800 - ₹900',
-        'phone': '+91 98765 43212',
+        'phone': '+91 7000753710',
+        'whatsapp': '+91 7000753710',
       },
     ];
 
@@ -156,8 +160,35 @@ class CabServicesScreen extends StatelessWidget {
                 ),
                 child: IconButton(
                   icon: const Icon(Icons.phone, color: Colors.white, size: 22),
-                  onPressed: () {
-                    // TODO: Call driver
+                  onPressed: () async {
+                    final Uri launchUri = Uri(
+                      scheme: 'tel',
+                      path: cab['phone'],
+                    );
+                    if (await canLaunchUrl(launchUri)) {
+                      await launchUrl(launchUri);
+                    }
+                  },
+                ),
+              ),
+              const SizedBox(width: 8),
+              Container(
+                width: 44,
+                height: 44,
+                decoration: BoxDecoration(
+                  color: Colors.blue.shade100,
+                  shape: BoxShape.circle,
+                ),
+                child: IconButton(
+                  icon: const Icon(Icons.message, color: Colors.blue, size: 22),
+                  onPressed: () async {
+                    final Uri launchUri = Uri(
+                      scheme: 'sms',
+                      path: cab['whatsapp'],
+                    );
+                    if (await canLaunchUrl(launchUri)) {
+                      await launchUrl(launchUri);
+                    }
                   },
                 ),
               ),
@@ -215,6 +246,17 @@ class CabServicesScreen extends StatelessWidget {
               const SizedBox(width: 8),
               Text(
                 cab['phone'],
+                style: TextStyle(
+                  fontSize: 14,
+                  color: Theme.of(context).textTheme.bodyMedium?.color,
+                ),
+              ),
+              const Spacer(),
+              const Icon(Icons.chat,
+                  size: 16, color: Color(0xFF25D366)), // WhatsApp Color
+              const SizedBox(width: 4),
+              Text(
+                cab['whatsapp'],
                 style: TextStyle(
                   fontSize: 14,
                   color: Theme.of(context).textTheme.bodyMedium?.color,
