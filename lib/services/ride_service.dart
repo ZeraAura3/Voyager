@@ -1,4 +1,7 @@
 // lib/services/ride_service.dart
+import 'dart:convert';
+
+import 'package:http/http.dart' as http;
 import 'package:supabase_flutter/supabase_flutter.dart';
 
 /// Service for managing rides and bookings in Supabase
@@ -19,6 +22,16 @@ class RideService {
     String? genderPreference,
   }) async {
     try {
+      final sourceCoords = await _geocodeLocation(fromLocation);
+      final destCoords = await _geocodeLocation(toLocation);
+
+      final routeId = await checkRouteCompatibility(
+        sourceLat: sourceCoords['lat']!,
+        sourceLng: sourceCoords['lng']!,
+        destLat: destCoords['lat']!,
+        destLng: destCoords['lng']!,
+      );
+
       final response = await _supabase
           .from('rides')
           .insert({
@@ -31,6 +44,7 @@ class RideService {
             'price_per_seat': pricePerSeat,
             'gender_preference': genderPreference ?? 'any',
             'status': 'active',
+            'route_id': routeId,
           })
           .select()
           .single();
@@ -40,7 +54,7 @@ class RideService {
       throw Exception('Failed to create ride: $e');
     }
   }
-
+  
   /// Search rides with filters
   Future<List<Map<String, dynamic>>> searchRides({
     String? fromLocation,
@@ -50,6 +64,7 @@ class RideService {
     String? genderPreference,
   }) async {
     try {
+
       var query = _supabase
           .from('rides')
           .select()
@@ -539,6 +554,69 @@ class RideService {
   }
 
   // ─── HELPERS ──────────────────────────────────────────────────────────
+
+  /// Check route compatibility using Supabase Edge Function
+  /// Sends source and destination coordinates to check if they lie on existing routes
+  /// or if adding them causes acceptable deviation (<10 min)
+  /// Done using edge functions on supabase
+  Future<String> checkRouteCompatibility({
+    required double sourceLat,
+    required double sourceLng,
+    required double destLat,
+    required double destLng,
+  }) async {
+    try {
+      final response = await _supabase.functions.invoke(
+        'check-route-compatibility',
+        body: {
+          'source_lat': sourceLat,
+          'source_lng': sourceLng,
+          'dest_lat': destLat,
+          'dest_lng': destLng,
+        },
+      );
+
+      if (response.status != 200) {
+        throw Exception('Edge function error: ${response.status}');
+      }
+
+      final data = response.data as Map<String, dynamic>;
+      final routeId = data['route_id'] as String?;
+      if (routeId == null || routeId.isEmpty) {
+        throw Exception('Edge function returned no route_id.');
+      }
+      return routeId;
+    } catch (e) {
+      throw Exception('Failed to check route compatibility: $e');
+    }
+  }
+
+  Future<Map<String, double>> _geocodeLocation(String address) async {
+    final uri = Uri.https('nominatim.openstreetmap.org', '/search', {
+      'q': address,
+      'format': 'json',
+      'limit': '1',
+    });
+
+    final response = await http.get(uri, headers: {
+      'User-Agent': 'Voyager/1.0 (contact@yourdomain.com)',
+    });
+
+    if (response.statusCode != 200) {
+      throw Exception('Failed to geocode "$address": ${response.statusCode}');
+    }
+
+    final body = json.decode(response.body);
+    if (body is! List || body.isEmpty) {
+      throw Exception('No geocoding results for "$address"');
+    }
+
+    final first = body.first as Map<String, dynamic>;
+    return {
+      'lat': double.parse(first['lat'] as String),
+      'lng': double.parse(first['lon'] as String),
+    };
+  }
 
   /// Get user info from users table
   Future<Map<String, dynamic>> _getUserInfo(String userId) async {
