@@ -1,5 +1,8 @@
 // screens/home_screen.dart
+import 'dart:convert';
+import 'package:http/http.dart' as http;
 import 'package:flutter/material.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
 import 'post_ride_screen.dart';
 import 'profile_screen.dart';
 import 'requests_screen.dart';
@@ -91,9 +94,13 @@ class FindRideTab extends StatefulWidget {
 }
 
 class _FindRideTabState extends State<FindRideTab> {
-  final _fromController = TextEditingController();
-  final _toController = TextEditingController();
+  String? _selectedFrom;
+  String? _selectedTo;
   final RideService _rideService = RideService();
+
+  // Common locations for the dropdowns
+  List<String> _locations = [];
+  bool _loadingLocations = true;
 
   // Filter options
   String? _selectedGender;
@@ -125,6 +132,7 @@ class _FindRideTabState extends State<FindRideTab> {
       await Future.wait([
         _loadAllRides(),
         _loadUserBookings(),
+        _loadLocations(), // Load locations using coordinates and Nominatim API
       ]);
     } catch (e) {
       if (mounted) {
@@ -134,6 +142,82 @@ class _FindRideTabState extends State<FindRideTab> {
         });
       }
     }
+  }
+
+  Future<void> _loadLocations() async {
+    try {
+      // Step 1: Request endpoints (start/end) from the database using custom RPC
+      // NOTE: Run this SQL in Supabase because your geometry is a LineString:
+      // CREATE OR REPLACE FUNCTION get_route_endpoints()
+      // RETURNS TABLE (lat float, lon float) LANGUAGE sql AS $$
+      //   SELECT DISTINCT lat, lon FROM (
+      //     SELECT ST_Y(ST_StartPoint(route_geom::geometry)) as lat, ST_X(ST_StartPoint(route_geom::geometry)) as lon FROM routes
+      //     UNION
+      //     SELECT ST_Y(ST_EndPoint(route_geom::geometry)) as lat, ST_X(ST_EndPoint(route_geom::geometry)) as lon FROM routes
+      //   ) as subq;
+      // $$;
+      final coordinates =
+          await Supabase.instance.client.rpc('get_route_endpoints');
+
+      List<String> loadedLocations = [];
+
+      for (var coord in coordinates) {
+        final lat = coord['lat'] as double;
+        final lon = coord['lon'] as double;
+
+        // Step 2: Use Nominatim reverse geocoding API to parse coordinates into place names
+        final name = await _reverseGeocode(lat, lon);
+        if (name.isNotEmpty && !loadedLocations.contains(name)) {
+          loadedLocations.add(name);
+        }
+        // IMPORTANT: Add a 1100ms delay to satisfy Nominatim's strict Limit of 1 Request/Second
+        await Future.delayed(const Duration(milliseconds: 1100));
+      }
+
+      if (mounted) {
+        setState(() {
+          _locations = loadedLocations;
+          _loadingLocations = false;
+        });
+      }
+    } catch (e) {
+      debugPrint('Failed to load locations: $e');
+      if (mounted) {
+        setState(() {
+          // Fallback static locations if API fails
+          _locations = ['IIT Mandi (North Campus)', 'Mandi'];
+          _loadingLocations = false;
+        });
+      }
+    }
+  }
+
+  Future<String> _reverseGeocode(double lat, double lon) async {
+    try {
+      final url = Uri.parse(
+          'https://nominatim.openstreetmap.org/reverse?format=json&lat=$lat&lon=$lon');
+      // Setting a descriptive User Agent is mandatory to not get IP blocked by Nominatim OpenStreetMap limits
+      final response = await http.get(url, headers: {
+        'User-Agent': 'VoyagerApp/1.0 (B23394@students.iitmandi.ac.in)',
+      });
+
+      if (response.statusCode == 200) {
+        final data = json.decode(response.body);
+        final address = data['address'] as Map<String, dynamic>;
+
+        // Find most relevant name part
+        final locationName = address['city'] ??
+            address['town'] ??
+            address['village'] ??
+            address['suburb'] ??
+            data['name'] ??
+            '';
+        return locationName.toString();
+      }
+    } catch (e) {
+      debugPrint('Reverse Geocoding failed for $lat,$lon: $e');
+    }
+    return '';
   }
 
   Future<void> _loadAllRides() async {
@@ -157,8 +241,8 @@ class _FindRideTabState extends State<FindRideTab> {
       if (mounted) {
         setState(() {
           _activeBookings = bookings
-              .where((b) =>
-                  b['status'] == 'pending' || b['status'] == 'confirmed')
+              .where(
+                  (b) => b['status'] == 'pending' || b['status'] == 'confirmed')
               .toList();
           _loadingBookings = false;
         });
@@ -175,8 +259,8 @@ class _FindRideTabState extends State<FindRideTab> {
     });
     try {
       final results = await _rideService.searchRides(
-        fromLocation: _fromController.text.trim(),
-        toLocation: _toController.text.trim(),
+        fromLocation: _selectedFrom,
+        toLocation: _selectedTo,
         maxPrice: _priceRange.end < 2000 ? _priceRange.end : null,
         minPrice: _priceRange.start > 0 ? _priceRange.start : null,
         genderPreference: _selectedGender,
@@ -206,8 +290,8 @@ class _FindRideTabState extends State<FindRideTab> {
     });
     try {
       final results = await _rideService.searchRides(
-        fromLocation: _fromController.text.trim(),
-        toLocation: _toController.text.trim(),
+        fromLocation: _selectedFrom,
+        toLocation: _selectedTo,
         maxPrice: _priceRange.end < 2000 ? _priceRange.end : null,
         minPrice: _priceRange.start > 0 ? _priceRange.start : null,
         genderPreference: _selectedGender,
@@ -230,8 +314,8 @@ class _FindRideTabState extends State<FindRideTab> {
       _searchResults = [];
       _selectedGender = null;
       _priceRange = const RangeValues(0, 2000);
-      _fromController.clear();
-      _toController.clear();
+      _selectedFrom = null;
+      _selectedTo = null;
     });
     _loadAllRides();
   }
@@ -276,11 +360,102 @@ class _FindRideTabState extends State<FindRideTab> {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-              content: Text('Booking failed: $e'),
-              backgroundColor: Colors.red),
+              content: Text('Booking failed: $e'), backgroundColor: Colors.red),
         );
       }
     }
+  }
+
+  void _showLocationDialog({required bool isFrom}) {
+    showDialog(
+      context: context,
+      builder: (context) {
+        final title = isFrom
+            ? AppLocalizations.of(context)!.fromWhere
+            : AppLocalizations.of(context)!.whereTo;
+        final selectedVal = isFrom ? _selectedFrom : _selectedTo;
+
+        return AlertDialog(
+          title:
+              Text(title, style: const TextStyle(fontWeight: FontWeight.bold)),
+          shape:
+              RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+          content: SizedBox(
+            width: double.maxFinite,
+            child: _locations.isEmpty
+                ? const Center(
+                    child: Padding(
+                        padding: EdgeInsets.all(20),
+                        child: Text('No locations available yet.')))
+                : ListView.separated(
+                    shrinkWrap: true,
+                    itemCount: _locations.length,
+                    separatorBuilder: (context, index) =>
+                        const Divider(height: 1),
+                    itemBuilder: (context, index) {
+                      final location = _locations[index];
+                      final isSelected = selectedVal == location;
+                      final isDisabled = isFrom
+                          ? (_selectedTo == location)
+                          : (_selectedFrom == location);
+
+                      return ListTile(
+                        leading: Icon(
+                          isFrom
+                              ? Icons.trip_origin_rounded
+                              : Icons.location_on_rounded,
+                          color: isDisabled
+                              ? Colors.grey[300]
+                              : (isSelected
+                                  ? const Color(0xFF00B25E)
+                                  : Colors.grey[500]),
+                        ),
+                        title: Text(
+                          location,
+                          style: TextStyle(
+                            color: isDisabled
+                                ? Colors.grey[400]
+                                : (isSelected
+                                    ? const Color(0xFF00B25E)
+                                    : Theme.of(context)
+                                        .textTheme
+                                        .bodyLarge
+                                        ?.color),
+                            fontWeight:
+                                isSelected ? FontWeight.bold : FontWeight.w500,
+                          ),
+                        ),
+                        trailing: isSelected
+                            ? const Icon(Icons.check_circle,
+                                color: Color(0xFF00B25E))
+                            : null,
+                        enabled: !isDisabled,
+                        onTap: () {
+                          if (!isDisabled) {
+                            setState(() {
+                              if (isFrom) {
+                                _selectedFrom = location;
+                              } else {
+                                _selectedTo = location;
+                              }
+                            });
+                            Navigator.pop(context);
+                          }
+                        },
+                      );
+                    },
+                  ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context),
+              child: Text(AppLocalizations.of(context)!.cancel ?? 'Cancel',
+                  style: const TextStyle(color: Colors.grey)),
+            ),
+          ],
+        );
+      },
+    );
   }
 
   @override
@@ -317,55 +492,98 @@ class _FindRideTabState extends State<FindRideTab> {
                     ),
                   ),
                   const SizedBox(height: 20),
-                  TextField(
-                    controller: _fromController,
-                    decoration: InputDecoration(
-                      hintText: AppLocalizations.of(context)!.fromWhere,
-                      hintStyle: TextStyle(color: Colors.grey[400]),
-                      prefixIcon: const Icon(Icons.location_on_outlined,
-                          color: Colors.grey),
-                      border: OutlineInputBorder(
-                        borderRadius: BorderRadius.circular(12),
-                        borderSide: BorderSide(color: Colors.grey[300]!),
-                      ),
-                      enabledBorder: OutlineInputBorder(
-                        borderRadius: BorderRadius.circular(12),
-                        borderSide: BorderSide(color: Colors.grey[300]!),
-                      ),
-                      focusedBorder: OutlineInputBorder(
-                        borderRadius: BorderRadius.circular(12),
-                        borderSide: const BorderSide(
-                            color: Color(0xFF00B25E), width: 2),
-                      ),
-                      filled: true,
-                      fillColor: Theme.of(context).cardColor,
-                    ),
-                  ),
+                  _loadingLocations
+                      ? const Center(
+                          child: Padding(
+                              padding: EdgeInsets.all(12),
+                              child: CircularProgressIndicator()))
+                      : GestureDetector(
+                          onTap: () => _showLocationDialog(isFrom: true),
+                          child: Container(
+                            padding: const EdgeInsets.symmetric(
+                                vertical: 16, horizontal: 16),
+                            decoration: BoxDecoration(
+                              color: Theme.of(context).cardColor,
+                              borderRadius: BorderRadius.circular(16),
+                              border: Border.all(
+                                  color: Colors.grey[200]!, width: 1.5),
+                            ),
+                            child: Row(
+                              children: [
+                                Icon(Icons.trip_origin_rounded,
+                                    color: _selectedFrom != null
+                                        ? const Color(0xFF00B25E)
+                                        : Colors.grey[400]),
+                                const SizedBox(width: 12),
+                                Expanded(
+                                  child: Text(
+                                    _selectedFrom ??
+                                        AppLocalizations.of(context)!.fromWhere,
+                                    style: TextStyle(
+                                      color: _selectedFrom != null
+                                          ? Theme.of(context)
+                                              .textTheme
+                                              .bodyLarge
+                                              ?.color
+                                          : Colors.grey[500],
+                                      fontSize: 15,
+                                      fontWeight: _selectedFrom != null
+                                          ? FontWeight.w500
+                                          : FontWeight.normal,
+                                    ),
+                                  ),
+                                ),
+                                Icon(Icons.keyboard_arrow_down_rounded,
+                                    color: Colors.grey[500]),
+                              ],
+                            ),
+                          ),
+                        ),
                   const SizedBox(height: 16),
-                  TextField(
-                    controller: _toController,
-                    decoration: InputDecoration(
-                      hintText: AppLocalizations.of(context)!.whereTo,
-                      hintStyle: TextStyle(color: Colors.grey[400]),
-                      prefixIcon: const Icon(Icons.location_on_outlined,
-                          color: Colors.grey),
-                      border: OutlineInputBorder(
-                        borderRadius: BorderRadius.circular(12),
-                        borderSide: BorderSide(color: Colors.grey[300]!),
-                      ),
-                      enabledBorder: OutlineInputBorder(
-                        borderRadius: BorderRadius.circular(12),
-                        borderSide: BorderSide(color: Colors.grey[300]!),
-                      ),
-                      focusedBorder: OutlineInputBorder(
-                        borderRadius: BorderRadius.circular(12),
-                        borderSide: const BorderSide(
-                            color: Color(0xFF00B25E), width: 2),
-                      ),
-                      filled: true,
-                      fillColor: Theme.of(context).cardColor,
-                    ),
-                  ),
+                  _loadingLocations
+                      ? const SizedBox()
+                      : GestureDetector(
+                          onTap: () => _showLocationDialog(isFrom: false),
+                          child: Container(
+                            padding: const EdgeInsets.symmetric(
+                                vertical: 16, horizontal: 16),
+                            decoration: BoxDecoration(
+                              color: Theme.of(context).cardColor,
+                              borderRadius: BorderRadius.circular(16),
+                              border: Border.all(
+                                  color: Colors.grey[200]!, width: 1.5),
+                            ),
+                            child: Row(
+                              children: [
+                                Icon(Icons.location_on_rounded,
+                                    color: _selectedTo != null
+                                        ? const Color(0xFF00B25E)
+                                        : Colors.grey[400]),
+                                const SizedBox(width: 12),
+                                Expanded(
+                                  child: Text(
+                                    _selectedTo ??
+                                        AppLocalizations.of(context)!.whereTo,
+                                    style: TextStyle(
+                                      color: _selectedTo != null
+                                          ? Theme.of(context)
+                                              .textTheme
+                                              .bodyLarge
+                                              ?.color
+                                          : Colors.grey[500],
+                                      fontSize: 15,
+                                      fontWeight: _selectedTo != null
+                                          ? FontWeight.w500
+                                          : FontWeight.normal,
+                                    ),
+                                  ),
+                                ),
+                                Icon(Icons.keyboard_arrow_down_rounded,
+                                    color: Colors.grey[500]),
+                              ],
+                            ),
+                          ),
+                        ),
                   const SizedBox(height: 20),
                   Row(
                     children: [
@@ -442,7 +660,8 @@ class _FindRideTabState extends State<FindRideTab> {
                   mainAxisAlignment: MainAxisAlignment.spaceBetween,
                   children: [
                     Text(
-                      AppLocalizations.of(context)!.searchResultsCount(_searchResults.length),
+                      AppLocalizations.of(context)!
+                          .searchResultsCount(_searchResults.length),
                       style: const TextStyle(
                         fontSize: 18,
                         fontWeight: FontWeight.bold,
@@ -460,7 +679,8 @@ class _FindRideTabState extends State<FindRideTab> {
                         child: Row(
                           mainAxisSize: MainAxisSize.min,
                           children: [
-                            const Icon(Icons.close, size: 14, color: Colors.red),
+                            const Icon(Icons.close,
+                                size: 14, color: Colors.red),
                             const SizedBox(width: 4),
                             Text(AppLocalizations.of(context)!.clear,
                                 style: const TextStyle(
@@ -481,10 +701,12 @@ class _FindRideTabState extends State<FindRideTab> {
                   child: Center(
                     child: Column(
                       children: [
-                        const Icon(Icons.search_off, size: 48, color: Colors.grey),
+                        const Icon(Icons.search_off,
+                            size: 48, color: Colors.grey),
                         const SizedBox(height: 8),
                         Text(AppLocalizations.of(context)!.noRidesFound,
-                            style: const TextStyle(color: Colors.grey, fontSize: 16)),
+                            style: const TextStyle(
+                                color: Colors.grey, fontSize: 16)),
                       ],
                     ),
                   ),
@@ -517,7 +739,8 @@ class _FindRideTabState extends State<FindRideTab> {
               ),
               const SizedBox(height: 12),
               if (_loadingBookings)
-                const Center(child: Padding(
+                const Center(
+                    child: Padding(
                   padding: EdgeInsets.all(24),
                   child: CircularProgressIndicator(),
                 ))
@@ -558,7 +781,8 @@ class _FindRideTabState extends State<FindRideTab> {
                         child: Row(
                           mainAxisSize: MainAxisSize.min,
                           children: [
-                            Icon(Icons.refresh, size: 16, color: Colors.grey[600]),
+                            Icon(Icons.refresh,
+                                size: 16, color: Colors.grey[600]),
                             const SizedBox(width: 4),
                             Text(AppLocalizations.of(context)!.refresh,
                                 style: TextStyle(
@@ -571,7 +795,8 @@ class _FindRideTabState extends State<FindRideTab> {
               ),
               const SizedBox(height: 12),
               if (_loadingAllRides)
-                const Center(child: Padding(
+                const Center(
+                    child: Padding(
                   padding: EdgeInsets.all(24),
                   child: CircularProgressIndicator(),
                 ))
@@ -585,12 +810,12 @@ class _FindRideTabState extends State<FindRideTab> {
                             size: 48, color: Colors.grey[400]),
                         const SizedBox(height: 8),
                         Text(AppLocalizations.of(context)!.noRidesAvailable,
-                            style:
-                                TextStyle(color: Colors.grey[500], fontSize: 16)),
+                            style: TextStyle(
+                                color: Colors.grey[500], fontSize: 16)),
                         const SizedBox(height: 4),
                         Text(AppLocalizations.of(context)!.beFirstToPost,
-                            style:
-                                TextStyle(color: Colors.grey[400], fontSize: 13)),
+                            style: TextStyle(
+                                color: Colors.grey[400], fontSize: 13)),
                       ],
                     ),
                   ),
@@ -736,11 +961,11 @@ class _FindRideTabState extends State<FindRideTab> {
             children: [
               Row(
                 children: [
-                  const Icon(Icons.calendar_today, size: 14, color: Colors.grey),
+                  const Icon(Icons.calendar_today,
+                      size: 14, color: Colors.grey),
                   const SizedBox(width: 4),
                   Text(date,
-                      style:
-                          const TextStyle(fontSize: 13, color: Colors.grey)),
+                      style: const TextStyle(fontSize: 13, color: Colors.grey)),
                 ],
               ),
               Row(
@@ -748,8 +973,7 @@ class _FindRideTabState extends State<FindRideTab> {
                   const Icon(Icons.access_time, size: 14, color: Colors.grey),
                   const SizedBox(width: 4),
                   Text(time,
-                      style:
-                          const TextStyle(fontSize: 13, color: Colors.grey)),
+                      style: const TextStyle(fontSize: 13, color: Colors.grey)),
                 ],
               ),
               Row(
@@ -757,8 +981,7 @@ class _FindRideTabState extends State<FindRideTab> {
                   const Icon(Icons.event_seat, size: 14, color: Colors.grey),
                   const SizedBox(width: 4),
                   Text(AppLocalizations.of(context)!.nSeats(seats),
-                      style:
-                          const TextStyle(fontSize: 13, color: Colors.grey)),
+                      style: const TextStyle(fontSize: 13, color: Colors.grey)),
                 ],
               ),
               Text(
@@ -835,21 +1058,21 @@ class _FindRideTabState extends State<FindRideTab> {
                     width: 8,
                     height: 8,
                     decoration: BoxDecoration(
-                      color: isConfirmed
-                          ? const Color(0xFF00B25E)
-                          : Colors.orange,
+                      color:
+                          isConfirmed ? const Color(0xFF00B25E) : Colors.orange,
                       shape: BoxShape.circle,
                     ),
                   ),
                   const SizedBox(width: 8),
                   Text(
-                    isConfirmed ? AppLocalizations.of(context)!.confirmed : AppLocalizations.of(context)!.pending,
+                    isConfirmed
+                        ? AppLocalizations.of(context)!.confirmed
+                        : AppLocalizations.of(context)!.pending,
                     style: TextStyle(
                       fontSize: 12,
                       fontWeight: FontWeight.w600,
-                      color: isConfirmed
-                          ? const Color(0xFF00B25E)
-                          : Colors.orange,
+                      color:
+                          isConfirmed ? const Color(0xFF00B25E) : Colors.orange,
                     ),
                   ),
                 ],
@@ -907,8 +1130,7 @@ class _FindRideTabState extends State<FindRideTab> {
               child: OutlinedButton(
                 onPressed: () async {
                   try {
-                    await _rideService
-                        .cancelBooking(booking['booking_id']);
+                    await _rideService.cancelBooking(booking['booking_id']);
                     _loadUserBookings();
                     if (mounted) {
                       ScaffoldMessenger.of(context).showSnackBar(
@@ -989,11 +1211,14 @@ class _FindRideTabState extends State<FindRideTab> {
                 const SizedBox(height: 12),
                 Row(
                   children: [
-                    _buildGenderOption(AppLocalizations.of(context)!.all, null, setModalState),
+                    _buildGenderOption(
+                        AppLocalizations.of(context)!.all, null, setModalState),
                     const SizedBox(width: 12),
-                    _buildGenderOption(AppLocalizations.of(context)!.male, 'male', setModalState),
+                    _buildGenderOption(AppLocalizations.of(context)!.male,
+                        'male', setModalState),
                     const SizedBox(width: 12),
-                    _buildGenderOption(AppLocalizations.of(context)!.female, 'female', setModalState),
+                    _buildGenderOption(AppLocalizations.of(context)!.female,
+                        'female', setModalState),
                   ],
                 ),
                 const SizedBox(height: 24),
@@ -1151,8 +1376,6 @@ class _FindRideTabState extends State<FindRideTab> {
 
   @override
   void dispose() {
-    _fromController.dispose();
-    _toController.dispose();
     super.dispose();
   }
 }
