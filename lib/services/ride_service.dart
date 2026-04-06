@@ -1,4 +1,7 @@
 // lib/services/ride_service.dart
+import 'dart:convert';
+
+import 'package:http/http.dart' as http;
 import 'package:supabase_flutter/supabase_flutter.dart';
 
 /// Service for managing rides and bookings in Supabase
@@ -19,6 +22,48 @@ class RideService {
     String? genderPreference,
   }) async {
     try {
+      final sourceCoords = await _geocodeLocation(fromLocation);
+      final destCoords = await _geocodeLocation(toLocation);
+
+      // final rides = await checkRouteCompatibility(
+      //   sourceLat: sourceCoords['lat']!,
+      //   sourceLng: sourceCoords['lng']!,
+      //   destLat: destCoords['lat']!,
+      //   destLng: destCoords['lng']!,
+      // );
+
+      // if (rides.isNotEmpty) {
+      //   // If we found compatible rides, we can link to the first one (or handle multiple matches as needed)
+      //   final existingRideIds = rides.map((r) => r['ride_id']).toList();
+      //   return {
+      //     'ride_ids': existingRideIds,
+      //     'message': 'Found compatible route with existing rides. Consider joining one of them instead of creating a new one.',
+      //   };
+      // }
+
+      // Make new route using OSRM, insert into routes table, and get route_id
+      final routeResponse = await _supabase.functions.invoke(
+        'create-route',
+        body: {
+          'source_lat': sourceCoords['lat'],
+          'source_lng': sourceCoords['lng'],
+          'dest_lat': destCoords['lat'],
+          'dest_lng': destCoords['lng'],
+        },
+      );
+      if (routeResponse.status != 200) {
+        throw Exception('Edge function error: ${routeResponse.status}');
+      }
+
+      //Read routeResponse JSON to check if success == true and get route_id
+      final routeData = routeResponse.data as Map<String, dynamic>;
+      final success = routeData['success'] as bool? ?? false;
+      if (!success) {
+        throw Exception('Failed to create route');
+      }
+      final routeId = routeData['route_id'] as String?;
+
+
       final response = await _supabase
           .from('rides')
           .insert({
@@ -31,6 +76,7 @@ class RideService {
             'price_per_seat': pricePerSeat,
             'gender_preference': genderPreference ?? 'any',
             'status': 'active',
+            'route_id': routeId,
           })
           .select()
           .single();
@@ -40,16 +86,53 @@ class RideService {
       throw Exception('Failed to create ride: $e');
     }
   }
-
+  
   /// Search rides with filters
-  Future<List<Map<String, dynamic>>> searchRides({
-    String? fromLocation,
-    String? toLocation,
-    double? maxPrice,
-    double? minPrice,
-    String? genderPreference,
-  }) async {
-    try {
+Future<List<Map<String, dynamic>>> searchRides({
+  String? fromLocation,
+  String? toLocation,
+  double? maxPrice,
+  double? minPrice,
+  String? genderPreference,
+}) async {
+  try {
+    List<Map<String, dynamic>> rides;
+
+    // ---------------------------------------------------------
+    // PATH A: Spatial Search (If user provides both locations)
+    // ---------------------------------------------------------
+    if (fromLocation != null && fromLocation.isNotEmpty &&
+        toLocation != null && toLocation.isNotEmpty) {
+      
+      // 1. Convert text to coordinates
+      final sourceCoords = await _geocodeLocation(fromLocation);
+      final destCoords = await _geocodeLocation(toLocation);
+
+      // 2. Call Edge Function -> PostGIS -> OSRM Detour Check
+      final compatibleRides = await checkRouteCompatibility(
+        sourceLat: sourceCoords['lat']!,
+        sourceLng: sourceCoords['lng']!,
+        destLat: destCoords['lat']!,
+        destLng: destCoords['lng']!,
+      );
+
+      // Extract the ride IDs from the compatibility check
+      final rideIds = compatibleRides.map((r) => r['ride_id'] as String).toList();
+      
+      // If the edge function created a NEW route, there are no existing 
+      // active rides attached to it yet. We return an empty list to the user.
+      if (rideIds.isEmpty) {
+        return [];
+      }
+
+      // 3. Use the compatible rides returned (they're already filtered by the edge function)
+      rides = List<Map<String, dynamic>>.from(compatibleRides);
+
+    } 
+    // ---------------------------------------------------------
+    // PATH B: Fallback String Search (If missing a location)
+    // ---------------------------------------------------------
+    else {
       var query = _supabase
           .from('rides')
           .select()
@@ -64,38 +147,50 @@ class RideService {
         query = query.ilike('to_location', '%$toLocation%');
       }
 
-      if (maxPrice != null) {
-        query = query.lte('price_per_seat', maxPrice);
-      }
-
-      if (minPrice != null) {
-        query = query.gte('price_per_seat', minPrice);
-      }
-
-      if (genderPreference != null &&
-          genderPreference.isNotEmpty &&
-          genderPreference.toLowerCase() != 'any' &&
-          genderPreference.toLowerCase() != 'all') {
-        query = query.or(
-            'gender_preference.eq.any,gender_preference.ilike.$genderPreference');
-      }
-
-      final response = await query.order('ride_date', ascending: true);
-
-      // Enrich each ride with poster info
-      List<Map<String, dynamic>> enriched = [];
-      for (var ride in List<Map<String, dynamic>>.from(response)) {
-        final userInfo = await _getUserInfo(ride['posted_by']);
-        ride['poster_name'] = userInfo['full_name'] ?? 'Unknown';
-        ride['poster_gender'] = userInfo['gender'] ?? '';
-        enriched.add(ride);
-      }
-
-      return enriched;
-    } catch (e) {
-      throw Exception('Failed to search rides: $e');
+      rides = List<Map<String, dynamic>>.from(await query.order('ride_date', ascending: true));
     }
+
+    // ---------------------------------------------------------
+    // COMMON: Apply Business Logic Filters (Price & Gender)
+    // ---------------------------------------------------------
+    if (maxPrice != null) {
+      rides = rides.where((ride) => (ride['price_per_seat'] as num) <= maxPrice).toList();
+    }
+
+    if (minPrice != null) {
+      rides = rides.where((ride) => (ride['price_per_seat'] as num) >= minPrice).toList();
+    }
+
+    if (genderPreference != null &&
+        genderPreference.isNotEmpty &&
+        genderPreference.toLowerCase() != 'any' &&
+        genderPreference.toLowerCase() != 'all') {
+      rides = rides.where((ride) {
+        final pref = ride['gender_preference'] as String? ?? 'any';
+        // Keeps the ride if it accepts 'any' gender, OR if it strictly matches the user's preference
+        return pref == 'any' || pref.toLowerCase() == genderPreference.toLowerCase();
+      }).toList();
+    }
+
+    // ---------------------------------------------------------
+    // COMMON: Enrich Data with Poster Info
+    // ---------------------------------------------------------
+    List<Map<String, dynamic>> enriched = [];
+    for (var ride in rides) {
+      final userInfo = await _getUserInfo(ride['posted_by']);
+      ride['poster_name'] = userInfo['full_name'] ?? 'Unknown';
+      ride['poster_gender'] = userInfo['gender'] ?? '';
+      enriched.add(ride);
+    }
+
+    // Sort by ride date one last time to ensure order is preserved after enrichment
+    enriched.sort((a, b) => (a['ride_date'] as String).compareTo(b['ride_date'] as String));
+
+    return enriched;
+  } catch (e) {
+    throw Exception('Failed to search rides: $e');
   }
+}
 
   /// Get all active rides as stream
   Stream<List<Map<String, dynamic>>> getActiveRides() {
@@ -539,6 +634,79 @@ class RideService {
   }
 
   // ─── HELPERS ──────────────────────────────────────────────────────────
+
+  /// Check route compatibility using Supabase Edge Function
+  /// Sends source and destination coordinates to check if they lie on existing routes
+  /// or if adding them causes acceptable deviation (<10 min)
+  /// Done using edge functions on supabase
+  Future<List<Map<String, dynamic>>> checkRouteCompatibility({
+    required double sourceLat,
+    required double sourceLng,
+    required double destLat,
+    required double destLng,
+  }) async {
+    try {
+      final response = await _supabase.functions.invoke(
+        'check-route-compatibility',
+        body: {
+          'source_lat': sourceLat,
+          'source_lng': sourceLng,
+          'dest_lat': destLat,
+          'dest_lng': destLng,
+        },
+      );
+
+      if (response.status != 200) {
+        throw Exception('Edge function error: ${response.status}');
+      }
+
+      final data = response.data as Map<String, dynamic>;
+      final routeId = data['route_id'] as String?;
+      if (routeId == null || routeId.isEmpty) {
+        // throw Exception('Edge function returned no route_id.');
+        //Return empty Postgres array instead of throwing error to indicate no compatible route found
+        return [];
+      }
+      // Run a supabase dbms query into rides to check for rides with the returned route_id and return the ride_id(s) if found such that status is 'active' and there are seats
+      final rides = await _supabase
+          .from('rides')
+          .select('ride_id')
+          .eq('route_id', routeId)
+          .eq('status', 'active')
+          .gt('available_seats', 0);
+      return rides;
+
+    } catch (e) {
+      throw Exception('Failed to check route compatibility: $e');
+    }
+  }
+
+  Future<Map<String, double>> _geocodeLocation(String address) async {
+    final uri = Uri.https('nominatim.openstreetmap.org', '/search', {
+      'q': address,
+      'format': 'json',
+      'limit': '1',
+    });
+
+    final response = await http.get(uri, headers: {
+      'User-Agent': 'Voyager/1.0 (contact@yourdomain.com)',
+    });
+
+    if (response.statusCode != 200) {
+      throw Exception('Failed to geocode "$address": ${response.statusCode}');
+    }
+
+    final body = json.decode(response.body);
+    if (body is! List || body.isEmpty) {
+      throw Exception('No geocoding results for "$address"');
+    }
+
+    final first = body.first as Map<String, dynamic>;
+    return {
+      'lat': double.parse(first['lat'] as String),
+      'lng': double.parse(first['lon'] as String),
+    };
+  }
 
   /// Get user info from users table
   Future<Map<String, dynamic>> _getUserInfo(String userId) async {
