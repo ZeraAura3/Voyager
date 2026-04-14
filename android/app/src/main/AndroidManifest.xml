@@ -8,9 +8,9 @@
         android:maxSdkVersion="32" />
 
     <application
-        android:label="voyager"
+        android:label="Voyager"
         android:name="${applicationName}"
-        android:icon="@mipmap/ic_launcher">
+        android:icon="@mipmap/launcher_icon">
         <activity
             android:name=".MainActivity"
             android:exported="true"

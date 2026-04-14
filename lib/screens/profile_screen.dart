@@ -536,11 +536,13 @@ class _ProfileScreenState extends State<ProfileScreen> {
         maxChildSize: 0.95,
         expand: false,
         builder: (context, scrollController) {
-          return Padding(
-            padding: const EdgeInsets.all(20),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
+          return StatefulBuilder(
+            builder: (context, setSheetState) {
+              return Padding(
+                padding: const EdgeInsets.all(20),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
                 Row(
                   mainAxisAlignment: MainAxisAlignment.spaceBetween,
                   children: [
@@ -628,7 +630,35 @@ class _ProfileScreenState extends State<ProfileScreen> {
                             itemCount: history.length,
                             itemBuilder: (context, index) {
                               return _buildHistoryCard(
-                                  context, history[index]);
+                                context,
+                                history[index],
+                                onCancelPostedRide: (rideId) async {
+                                  try {
+                                    await rideService.updateRideStatus(
+                                        rideId, 'cancelled');
+                                    if (!context.mounted) {
+                                      return;
+                                    }
+                                    ScaffoldMessenger.of(context).showSnackBar(
+                                      const SnackBar(
+                                        content: Text('Ride cancelled successfully'),
+                                        backgroundColor: Color(0xFF00B25E),
+                                      ),
+                                    );
+                                    setSheetState(() {});
+                                  } catch (e) {
+                                    if (!context.mounted) {
+                                      return;
+                                    }
+                                    ScaffoldMessenger.of(context).showSnackBar(
+                                      SnackBar(
+                                        content: Text('Failed to cancel ride: $e'),
+                                        backgroundColor: Colors.red,
+                                      ),
+                                    );
+                                  }
+                                },
+                              );
                             },
                           );
                         },
@@ -636,8 +666,10 @@ class _ProfileScreenState extends State<ProfileScreen> {
                     },
                   ),
                 ),
-              ],
-            ),
+                  ],
+                ),
+              );
+            },
           );
         },
       ),
@@ -677,6 +709,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
       for (var ride in rides) {
         allItems.add({
           'type': 'ride_posted',
+          'ride_id': ride['ride_id'],
           'category': 'ride',
           'status': (ride['status'] as String?) ?? 'active',
           'from': ride['from_location'] ?? '',
@@ -751,7 +784,11 @@ class _ProfileScreenState extends State<ProfileScreen> {
     return allItems;
   }
 
-  Widget _buildHistoryCard(BuildContext context, Map<String, dynamic> item) {
+  Widget _buildHistoryCard(
+    BuildContext context,
+    Map<String, dynamic> item, {
+    Future<void> Function(String rideId)? onCancelPostedRide,
+  }) {
     final type = item['type'] as String;
     final category = item['category'] as String;
     final status = item['status'] as String;
@@ -759,6 +796,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
     final to = item['to'] as String? ?? '';
     final date = item['date'] as String? ?? '';
     final price = item['price'] as double?;
+    final rideId = item['ride_id'] as String?;
 
     // Status colors
     Color statusColor;
@@ -928,6 +966,61 @@ class _ProfileScreenState extends State<ProfileScreen> {
                 fontSize: 14,
                 fontWeight: FontWeight.w600,
                 color: Color(0xFF00B25E),
+              ),
+            ),
+          ],
+          if (type == 'ride_posted' &&
+              status == 'active' &&
+              rideId != null &&
+              rideId.isNotEmpty &&
+              onCancelPostedRide != null) ...[
+            const SizedBox(height: 12),
+            Align(
+              alignment: Alignment.centerRight,
+              child: OutlinedButton.icon(
+                onPressed: () async {
+                  final shouldCancel = await showDialog<bool>(
+                    context: context,
+                    builder: (dialogContext) => AlertDialog(
+                      title: const Text('Cancel this ride?'),
+                      content: const Text(
+                        'This will mark your posted ride as cancelled and it will no longer accept bookings.',
+                      ),
+                      actions: [
+                        TextButton(
+                          onPressed: () => Navigator.pop(dialogContext, false),
+                          child: const Text('No'),
+                        ),
+                        ElevatedButton(
+                          onPressed: () => Navigator.pop(dialogContext, true),
+                          style: ElevatedButton.styleFrom(
+                            backgroundColor: Colors.red,
+                          ),
+                          child: const Text(
+                            'Yes, Cancel',
+                            style: TextStyle(color: Colors.white),
+                          ),
+                        ),
+                      ],
+                    ),
+                  );
+
+                  if (shouldCancel == true) {
+                    await onCancelPostedRide(rideId);
+                  }
+                },
+                icon: const Icon(Icons.cancel_outlined,
+                    size: 16, color: Colors.red),
+                label: const Text(
+                  'Cancel Ride',
+                  style: TextStyle(color: Colors.red),
+                ),
+                style: OutlinedButton.styleFrom(
+                  side: const BorderSide(color: Colors.red),
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                ),
               ),
             ),
           ],

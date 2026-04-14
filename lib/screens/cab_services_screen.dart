@@ -37,12 +37,13 @@ class CabServicesScreen extends StatelessWidget {
           ),
           Expanded(
             child: StreamBuilder<QuerySnapshot>(
-              stream: FirebaseFirestore.instance
-                  .collection('drivers')
-                  .snapshots(),
+              stream:
+                  FirebaseFirestore.instance.collection('drivers').snapshots(),
               builder: (context, snapshot) {
                 if (snapshot.hasError) {
-                  return Center(child: Text(AppLocalizations.of(context)!.somethingWentWrong));
+                  return Center(
+                      child: Text(
+                          AppLocalizations.of(context)!.somethingWentWrong));
                 }
 
                 if (snapshot.connectionState == ConnectionState.waiting) {
@@ -54,7 +55,8 @@ class CabServicesScreen extends StatelessWidget {
                     child: Column(
                       mainAxisAlignment: MainAxisAlignment.center,
                       children: [
-                        Icon(Icons.local_taxi, size: 64, color: Colors.grey[400]),
+                        Icon(Icons.local_taxi,
+                            size: 64, color: Colors.grey[400]),
                         const SizedBox(height: 16),
                         Text(
                           AppLocalizations.of(context)!.noDriversAvailable,
@@ -74,7 +76,8 @@ class CabServicesScreen extends StatelessWidget {
                   padding: const EdgeInsets.all(16),
                   itemCount: drivers.length,
                   itemBuilder: (context, index) {
-                    final driverData = drivers[index].data() as Map<String, dynamic>;
+                    final driverData =
+                        drivers[index].data() as Map<String, dynamic>;
                     return _buildDriverCard(context, driverData);
                   },
                 );
@@ -89,7 +92,7 @@ class CabServicesScreen extends StatelessWidget {
   Widget _buildDriverCard(BuildContext context, Map<String, dynamic> driver) {
     final isAvailable = driver['isAvailable'] ?? false;
     final usualRoutes = driver['usualRoutes'] as List<dynamic>? ?? [];
-    
+
     return Container(
       margin: const EdgeInsets.only(bottom: 16),
       padding: const EdgeInsets.all(16),
@@ -97,7 +100,7 @@ class CabServicesScreen extends StatelessWidget {
         color: Theme.of(context).cardColor,
         borderRadius: BorderRadius.circular(16),
         border: Border.all(
-          color: isAvailable 
+          color: isAvailable
               ? const Color(0xFF00B25E).withOpacity(0.3)
               : Colors.grey.withOpacity(0.3),
           width: 2,
@@ -146,7 +149,8 @@ class CabServicesScreen extends StatelessWidget {
                             style: TextStyle(
                               fontSize: 18,
                               fontWeight: FontWeight.bold,
-                              color: Theme.of(context).textTheme.bodyLarge?.color,
+                              color:
+                                  Theme.of(context).textTheme.bodyLarge?.color,
                             ),
                           ),
                         ),
@@ -177,7 +181,9 @@ class CabServicesScreen extends StatelessWidget {
                               ),
                               const SizedBox(width: 6),
                               Text(
-                                isAvailable ? AppLocalizations.of(context)!.online : AppLocalizations.of(context)!.offline,
+                                isAvailable
+                                    ? AppLocalizations.of(context)!.online
+                                    : AppLocalizations.of(context)!.offline,
                                 style: TextStyle(
                                   fontSize: 12,
                                   fontWeight: FontWeight.w600,
@@ -194,7 +200,8 @@ class CabServicesScreen extends StatelessWidget {
                     const SizedBox(height: 4),
                     Row(
                       children: [
-                        const Icon(Icons.star, color: Color(0xFFFFB800), size: 16),
+                        const Icon(Icons.star,
+                            color: Color(0xFFFFB800), size: 16),
                         const SizedBox(width: 4),
                         Text(
                           (driver['rating'] ?? 5.0).toString(),
@@ -219,7 +226,7 @@ class CabServicesScreen extends StatelessWidget {
             ],
           ),
           const SizedBox(height: 16),
-          
+
           // Vehicle Info
           Container(
             padding: const EdgeInsets.all(12),
@@ -229,7 +236,8 @@ class CabServicesScreen extends StatelessWidget {
             ),
             child: Row(
               children: [
-                const Icon(Icons.directions_car, color: Color(0xFF00B25E), size: 20),
+                const Icon(Icons.directions_car,
+                    color: Color(0xFF00B25E), size: 20),
                 const SizedBox(width: 8),
                 Text(
                   driver['vehicleModel'] ?? 'Vehicle',
@@ -249,7 +257,7 @@ class CabServicesScreen extends StatelessWidget {
               ],
             ),
           ),
-          
+
           // Standard Route - Display first route or default
           const SizedBox(height: 16),
           Row(
@@ -258,8 +266,9 @@ class CabServicesScreen extends StatelessWidget {
               const SizedBox(width: 8),
               Expanded(
                 child: Text(
-                  usualRoutes.isNotEmpty 
-                      ? (usualRoutes[0] as Map<String, dynamic>)['route'] ?? AppLocalizations.of(context)!.routeNotSet
+                  usualRoutes.isNotEmpty
+                      ? (usualRoutes[0] as Map<String, dynamic>)['route'] ??
+                          AppLocalizations.of(context)!.routeNotSet
                       : AppLocalizations.of(context)!.routeNotSet,
                   style: TextStyle(
                     fontSize: 14,
@@ -272,11 +281,13 @@ class CabServicesScreen extends StatelessWidget {
           const SizedBox(height: 8),
           Row(
             children: [
-              const Icon(Icons.attach_money, size: 18, color: Color(0xFF00B25E)),
+              const Icon(Icons.attach_money,
+                  size: 18, color: Color(0xFF00B25E)),
               const SizedBox(width: 8),
               Text(
                 usualRoutes.isNotEmpty
-                    ? (usualRoutes[0] as Map<String, dynamic>)['price'] ?? AppLocalizations.of(context)!.priceNotSet
+                    ? (usualRoutes[0] as Map<String, dynamic>)['price'] ??
+                        AppLocalizations.of(context)!.priceNotSet
                     : AppLocalizations.of(context)!.priceNotSet,
                 style: TextStyle(
                   fontSize: 14,
@@ -286,7 +297,7 @@ class CabServicesScreen extends StatelessWidget {
               ),
             ],
           ),
-          
+
           // Additional Routes Section (if more than one)
           if (usualRoutes.length > 1) ...[
             const SizedBox(height: 16),
@@ -328,9 +339,9 @@ class CabServicesScreen extends StatelessWidget {
               );
             }).toList(),
           ],
-          
+
           const SizedBox(height: 16),
-          
+
           // Contact Buttons
           Row(
             children: [
@@ -377,19 +388,22 @@ class CabServicesScreen extends StatelessWidget {
       scheme: 'tel',
       path: phoneNumber,
     );
-    if (await canLaunchUrl(launchUri)) {
+    try {
       await launchUrl(launchUri);
+    } catch (e) {
+      debugPrint('Could not launch phone call: $e');
     }
   }
 
   Future<void> _openWhatsApp(String phoneNumber) async {
-    final Uri launchUri = Uri(
-      scheme: 'https',
-      host: 'wa.me',
-      path: phoneNumber.replaceAll('+', '').replaceAll(' ', ''),
-    );
-    if (await canLaunchUrl(launchUri)) {
+    final String cleanPhone =
+        phoneNumber.replaceAll('+', '').replaceAll(' ', '');
+    final Uri launchUri = Uri.parse('https://wa.me/$cleanPhone');
+
+    try {
       await launchUrl(launchUri, mode: LaunchMode.externalApplication);
+    } catch (e) {
+      debugPrint('Could not launch WhatsApp: $e');
     }
   }
 }

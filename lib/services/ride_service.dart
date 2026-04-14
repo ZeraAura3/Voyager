@@ -1,9 +1,14 @@
 // lib/services/ride_service.dart
+import 'dart:convert';
+import 'dart:math' as math;
+
+import 'package:http/http.dart' as http;
 import 'package:supabase_flutter/supabase_flutter.dart';
 
 /// Service for managing rides and bookings in Supabase
 class RideService {
   final SupabaseClient _supabase = Supabase.instance.client;
+  static final Map<String, Map<String, double>> _geocodeCache = {};
 
   // ─── RIDES ────────────────────────────────────────────────────────────
 
@@ -17,39 +22,178 @@ class RideService {
     required int availableSeats,
     required double pricePerSeat,
     String? genderPreference,
+    double? sourceLat,
+    double? sourceLng,
+    double? destLat,
+    double? destLng,
   }) async {
     try {
-      final response = await _supabase
-          .from('rides')
-          .insert({
-            'posted_by': postedBy,
-            'from_location': fromLocation,
-            'to_location': toLocation,
-            'ride_date': rideDate,
-            'ride_time': rideTime,
-            'available_seats': availableSeats,
-            'price_per_seat': pricePerSeat,
-            'gender_preference': genderPreference ?? 'any',
-            'status': 'active',
-          })
-          .select()
-          .single();
+      final sourceCoords =
+          sourceLat != null && sourceLng != null
+              ? {'lat': sourceLat, 'lng': sourceLng}
+              : await _geocodeLocation(fromLocation);
+      final destCoords =
+          destLat != null && destLng != null
+              ? {'lat': destLat, 'lng': destLng}
+              : await _geocodeLocation(toLocation);
 
-      return response;
+      String? routeId;
+      try {
+        final routeResponse = await _supabase.functions.invoke(
+          'create-route',
+          body: {
+            'source_lat': sourceCoords['lat'],
+            'source_lng': sourceCoords['lng'],
+            'dest_lat': destCoords['lat'],
+            'dest_lng': destCoords['lng'],
+          },
+        );
+
+        if (routeResponse.status == 200 && routeResponse.data is Map<String, dynamic>) {
+          final routeData = routeResponse.data as Map<String, dynamic>;
+          final success = routeData['success'] as bool? ?? false;
+          if (success) {
+            routeId = routeData['route_id'] as String?;
+          }
+        }
+      } catch (e) {
+        final errorText = e.toString();
+        if (errorText.contains('driver_id') && errorText.contains('routes')) {
+          routeId = null;
+        } else {
+          routeId = null;
+        }
+      }
+
+      final payload = {
+        'posted_by': postedBy,
+        'from_location': fromLocation,
+        'to_location': toLocation,
+        'ride_date': rideDate,
+        'ride_time': rideTime,
+        'available_seats': availableSeats,
+        'price_per_seat': pricePerSeat,
+        'gender_preference': genderPreference ?? 'any',
+        'status': 'active',
+      };
+
+      if (routeId != null && routeId.isNotEmpty) {
+        payload['route_id'] = routeId;
+      }
+
+      try {
+        final response = await _supabase
+            .from('rides')
+            .insert(payload)
+            .select()
+            .single();
+        return response;
+      } on PostgrestException catch (e) {
+        final missingRouteIdColumn =
+            e.message.contains('route_id') && e.message.contains('does not exist');
+
+        if (!missingRouteIdColumn || !payload.containsKey('route_id')) {
+          rethrow;
+        }
+
+        payload.remove('route_id');
+        final response = await _supabase
+            .from('rides')
+            .insert(payload)
+            .select()
+            .single();
+        return response;
+      }
     } catch (e) {
       throw Exception('Failed to create ride: $e');
     }
   }
-
+  
   /// Search rides with filters
-  Future<List<Map<String, dynamic>>> searchRides({
-    String? fromLocation,
-    String? toLocation,
-    double? maxPrice,
-    double? minPrice,
-    String? genderPreference,
-  }) async {
-    try {
+Future<List<Map<String, dynamic>>> searchRides({
+  String? fromLocation,
+  String? toLocation,
+  double? maxPrice,
+  double? minPrice,
+  String? genderPreference,
+  double? sourceLat,
+  double? sourceLng,
+  double? destLat,
+  double? destLng,
+}) async {
+  try {
+    List<Map<String, dynamic>> rides;
+    Map<String, double>? querySourceCoords;
+    Map<String, double>? queryDestCoords;
+
+    // ---------------------------------------------------------
+    // PATH A: Spatial Search (If user provides both locations)
+    // ---------------------------------------------------------
+    final hasCoordinateInputs =
+      sourceLat != null && sourceLng != null && destLat != null && destLng != null;
+    final hasTextInputs = fromLocation != null && fromLocation.isNotEmpty &&
+      toLocation != null && toLocation.isNotEmpty;
+
+    if (hasCoordinateInputs || hasTextInputs) {
+      final sourceCoords = hasCoordinateInputs
+        ? {'lat': sourceLat, 'lng': sourceLng}
+        : await _geocodeLocation(fromLocation!);
+      final destCoords = hasCoordinateInputs
+        ? {'lat': destLat, 'lng': destLng}
+        : await _geocodeLocation(toLocation!);
+
+      querySourceCoords = {
+        'lat': sourceCoords['lat']!,
+        'lng': sourceCoords['lng']!,
+      };
+      queryDestCoords = {
+        'lat': destCoords['lat']!,
+        'lng': destCoords['lng']!,
+      };
+
+      // 2. Call Edge Function -> PostGIS -> OSRM Detour Check
+      final compatibleRides = await checkRouteCompatibility(
+        sourceLat: sourceCoords['lat']!,
+        sourceLng: sourceCoords['lng']!,
+        destLat: destCoords['lat']!,
+        destLng: destCoords['lng']!,
+      );
+
+      // Extract the ride IDs from the compatibility check
+      final rideIds = compatibleRides.map((r) => r['ride_id'] as String).toList();
+      
+      // If the edge function created a NEW route, there are no existing 
+      // active rides attached to it yet. We return an empty list to the user.
+      if (rideIds.isEmpty) {
+        var fallbackQuery = _supabase
+            .from('rides')
+            .select()
+            .eq('status', 'active')
+            .gt('available_seats', 0);
+
+        if (fromLocation != null && fromLocation.isNotEmpty) {
+          fallbackQuery = fallbackQuery.ilike('from_location', '%$fromLocation%');
+        }
+
+        rides = List<Map<String, dynamic>>.from(
+          await fallbackQuery.order('ride_date', ascending: true),
+        );
+      } else {
+        // 3. Fetch full ride rows so downstream filters and UI work correctly
+        rides = List<Map<String, dynamic>>.from(await _supabase
+            .from('rides')
+            .select()
+            .eq('status', 'active')
+            .gt('available_seats', 0)
+            .inFilter('ride_id', rideIds)
+            .order('ride_date', ascending: true));
+      }
+
+    } 
+    // ---------------------------------------------------------
+    // PATH B: Fallback String Search (If missing a location)
+    // ---------------------------------------------------------
+    else {
       var query = _supabase
           .from('rides')
           .select()
@@ -64,38 +208,85 @@ class RideService {
         query = query.ilike('to_location', '%$toLocation%');
       }
 
-      if (maxPrice != null) {
-        query = query.lte('price_per_seat', maxPrice);
-      }
-
-      if (minPrice != null) {
-        query = query.gte('price_per_seat', minPrice);
-      }
-
-      if (genderPreference != null &&
-          genderPreference.isNotEmpty &&
-          genderPreference.toLowerCase() != 'any' &&
-          genderPreference.toLowerCase() != 'all') {
-        query = query.or(
-            'gender_preference.eq.any,gender_preference.ilike.$genderPreference');
-      }
-
-      final response = await query.order('ride_date', ascending: true);
-
-      // Enrich each ride with poster info
-      List<Map<String, dynamic>> enriched = [];
-      for (var ride in List<Map<String, dynamic>>.from(response)) {
-        final userInfo = await _getUserInfo(ride['posted_by']);
-        ride['poster_name'] = userInfo['full_name'] ?? 'Unknown';
-        ride['poster_gender'] = userInfo['gender'] ?? '';
-        enriched.add(ride);
-      }
-
-      return enriched;
-    } catch (e) {
-      throw Exception('Failed to search rides: $e');
+      rides = List<Map<String, dynamic>>.from(await query.order('ride_date', ascending: true));
     }
+
+    // ---------------------------------------------------------
+    // COMMON: Apply Business Logic Filters (Price & Gender)
+    // ---------------------------------------------------------
+    if (maxPrice != null) {
+      rides = rides.where((ride) => (ride['price_per_seat'] as num) <= maxPrice).toList();
+    }
+
+    if (minPrice != null) {
+      rides = rides.where((ride) => (ride['price_per_seat'] as num) >= minPrice).toList();
+    }
+
+    if (genderPreference != null &&
+        genderPreference.isNotEmpty &&
+        genderPreference.toLowerCase() != 'any' &&
+        genderPreference.toLowerCase() != 'all') {
+      rides = rides.where((ride) {
+        final pref = ride['gender_preference'] as String? ?? 'any';
+        // Keeps the ride if it accepts 'any' gender, OR if it strictly matches the user's preference
+        return pref == 'any' || pref.toLowerCase() == genderPreference.toLowerCase();
+      }).toList();
+    }
+
+    // ---------------------------------------------------------
+    // COMMON: Enrich Data with Poster Info
+    // ---------------------------------------------------------
+    List<Map<String, dynamic>> enriched = [];
+    for (var ride in rides) {
+      final userInfo = await _getUserInfo(ride['posted_by']);
+      ride['poster_name'] = userInfo['full_name'] ?? 'Unknown';
+      ride['poster_gender'] = userInfo['gender'] ?? '';
+      enriched.add(ride);
+    }
+
+    if (querySourceCoords != null && queryDestCoords != null) {
+      for (final ride in enriched) {
+        final rideFrom = (ride['from_location'] as String? ?? '').trim();
+        final rideTo = (ride['to_location'] as String? ?? '').trim();
+
+        final rideSourceCoords = await _tryGeocodeLocation(rideFrom);
+        final rideDestCoords = await _tryGeocodeLocation(rideTo);
+
+        if (rideSourceCoords == null || rideDestCoords == null) {
+          ride['overlap_score'] = 0.0;
+          continue;
+        }
+
+        final score = _calculateOverlapScore(
+          querySourceLat: querySourceCoords['lat']!,
+          querySourceLng: querySourceCoords['lng']!,
+          queryDestLat: queryDestCoords['lat']!,
+          queryDestLng: queryDestCoords['lng']!,
+          rideSourceLat: rideSourceCoords['lat']!,
+          rideSourceLng: rideSourceCoords['lng']!,
+          rideDestLat: rideDestCoords['lat']!,
+          rideDestLng: rideDestCoords['lng']!,
+        );
+        ride['overlap_score'] = score;
+      }
+
+      enriched.sort((a, b) {
+        final scoreA = (a['overlap_score'] as num?)?.toDouble() ?? 0;
+        final scoreB = (b['overlap_score'] as num?)?.toDouble() ?? 0;
+        if (scoreB != scoreA) {
+          return scoreB.compareTo(scoreA);
+        }
+        return (a['ride_date'] as String).compareTo(b['ride_date'] as String);
+      });
+    } else {
+      enriched.sort((a, b) => (a['ride_date'] as String).compareTo(b['ride_date'] as String));
+    }
+
+    return enriched;
+  } catch (e) {
+    throw Exception('Failed to search rides: $e');
   }
+}
 
   /// Get all active rides as stream
   Stream<List<Map<String, dynamic>>> getActiveRides() {
@@ -539,6 +730,230 @@ class RideService {
   }
 
   // ─── HELPERS ──────────────────────────────────────────────────────────
+
+  /// Check route compatibility using Supabase Edge Function
+  /// Sends source and destination coordinates to check if they lie on existing routes
+  /// or if adding them causes acceptable deviation (<10 min)
+  /// Done using edge functions on supabase
+  Future<List<Map<String, dynamic>>> checkRouteCompatibility({
+    required double sourceLat,
+    required double sourceLng,
+    required double destLat,
+    required double destLng,
+  }) async {
+    try {
+      final response = await _supabase.functions.invoke(
+        'check-route-compatibility',
+        body: {
+          'source_lat': sourceLat,
+          'source_lng': sourceLng,
+          'dest_lat': destLat,
+          'dest_lng': destLng,
+        },
+      );
+
+      if (response.status != 200) {
+        throw Exception('Edge function error: ${response.status}');
+      }
+
+      final data = response.data as Map<String, dynamic>;
+      final routeId = data['route_id'] as String?;
+      if (routeId == null || routeId.isEmpty) {
+        // throw Exception('Edge function returned no route_id.');
+        //Return empty Postgres array instead of throwing error to indicate no compatible route found
+        return [];
+      }
+      // Run a supabase dbms query into rides to check for rides with the returned route_id and return the ride_id(s) if found such that status is 'active' and there are seats
+      final rides = await _supabase
+          .from('rides')
+          .select('ride_id')
+          .eq('route_id', routeId)
+          .eq('status', 'active')
+          .gt('available_seats', 0);
+      return rides;
+
+    } catch (e) {
+      throw Exception('Failed to check route compatibility: $e');
+    }
+  }
+
+  double _calculateOverlapScore({
+    required double querySourceLat,
+    required double querySourceLng,
+    required double queryDestLat,
+    required double queryDestLng,
+    required double rideSourceLat,
+    required double rideSourceLng,
+    required double rideDestLat,
+    required double rideDestLng,
+  }) {
+    final sourceDistanceKm =
+        _haversineKm(querySourceLat, querySourceLng, rideSourceLat, rideSourceLng);
+    final destDistanceKm =
+        _haversineKm(queryDestLat, queryDestLng, rideDestLat, rideDestLng);
+
+    final queryLengthKm =
+        _haversineKm(querySourceLat, querySourceLng, queryDestLat, queryDestLng);
+    final rideLengthKm =
+        _haversineKm(rideSourceLat, rideSourceLng, rideDestLat, rideDestLng);
+
+    final queryBearing =
+        _bearingDegrees(querySourceLat, querySourceLng, queryDestLat, queryDestLng);
+    final rideBearing =
+        _bearingDegrees(rideSourceLat, rideSourceLng, rideDestLat, rideDestLng);
+
+    final sourceScore = _clamp01(1 - (sourceDistanceKm / 40));
+    final destScore = _clamp01(1 - (destDistanceKm / 80));
+    final directionScore = _clamp01(1 - (_angleDifference(queryBearing, rideBearing) / 180));
+    final directionCosine = _directionCosine(
+      querySourceLat: querySourceLat,
+      querySourceLng: querySourceLng,
+      queryDestLat: queryDestLat,
+      queryDestLng: queryDestLng,
+      rideSourceLat: rideSourceLat,
+      rideSourceLng: rideSourceLng,
+      rideDestLat: rideDestLat,
+      rideDestLng: rideDestLng,
+    );
+    final directionConsistency = _clamp01((directionCosine + 1) / 2);
+    final detourScore = _clamp01(
+      1 - ((rideLengthKm - queryLengthKm).abs() / math.max(queryLengthKm, 1)),
+    );
+
+    final weighted =
+        (0.38 * sourceScore) +
+        (0.32 * destScore) +
+        (0.20 * directionScore) +
+        (0.10 * detourScore);
+
+    var score = 100 * _clamp01(weighted) * directionConsistency;
+
+    final angle = _angleDifference(queryBearing, rideBearing);
+    final strongOppositeDirection = directionCosine < -0.35 || angle > 120;
+    if (strongOppositeDirection) {
+      score = math.min(score, 15);
+    }
+
+    return score;
+  }
+
+  double _directionCosine({
+    required double querySourceLat,
+    required double querySourceLng,
+    required double queryDestLat,
+    required double queryDestLng,
+    required double rideSourceLat,
+    required double rideSourceLng,
+    required double rideDestLat,
+    required double rideDestLng,
+  }) {
+    final meanLatRad =
+        _toRadians((querySourceLat + queryDestLat + rideSourceLat + rideDestLat) / 4);
+
+    final qDx = (queryDestLng - querySourceLng) * math.cos(meanLatRad);
+    final qDy = (queryDestLat - querySourceLat);
+    final rDx = (rideDestLng - rideSourceLng) * math.cos(meanLatRad);
+    final rDy = (rideDestLat - rideSourceLat);
+
+    final qMag = math.sqrt((qDx * qDx) + (qDy * qDy));
+    final rMag = math.sqrt((rDx * rDx) + (rDy * rDy));
+    if (qMag == 0 || rMag == 0) {
+      return 0;
+    }
+
+    final cosine = ((qDx * rDx) + (qDy * rDy)) / (qMag * rMag);
+    return cosine.clamp(-1.0, 1.0);
+  }
+
+  double _haversineKm(double lat1, double lng1, double lat2, double lng2) {
+    const earthRadiusKm = 6371.0;
+    final dLat = _toRadians(lat2 - lat1);
+    final dLng = _toRadians(lng2 - lng1);
+
+    final a = math.sin(dLat / 2) * math.sin(dLat / 2) +
+        math.cos(_toRadians(lat1)) *
+            math.cos(_toRadians(lat2)) *
+            math.sin(dLng / 2) *
+            math.sin(dLng / 2);
+    final c = 2 * math.atan2(math.sqrt(a), math.sqrt(1 - a));
+    return earthRadiusKm * c;
+  }
+
+  double _bearingDegrees(double lat1, double lng1, double lat2, double lng2) {
+    final lat1Rad = _toRadians(lat1);
+    final lat2Rad = _toRadians(lat2);
+    final dLngRad = _toRadians(lng2 - lng1);
+
+    final y = math.sin(dLngRad) * math.cos(lat2Rad);
+    final x = math.cos(lat1Rad) * math.sin(lat2Rad) -
+        math.sin(lat1Rad) * math.cos(lat2Rad) * math.cos(dLngRad);
+
+    final bearing = (math.atan2(y, x) * 180 / math.pi + 360) % 360;
+    return bearing;
+  }
+
+  double _angleDifference(double a, double b) {
+    final diff = (a - b).abs() % 360;
+    return diff > 180 ? 360 - diff : diff;
+  }
+
+  double _toRadians(double degrees) => degrees * (math.pi / 180);
+
+  double _clamp01(double value) {
+    if (value < 0) {
+      return 0;
+    }
+    if (value > 1) {
+      return 1;
+    }
+    return value;
+  }
+
+  Future<Map<String, double>?> _tryGeocodeLocation(String address) async {
+    if (address.trim().isEmpty) {
+      return null;
+    }
+    try {
+      return await _geocodeLocation(address);
+    } catch (_) {
+      return null;
+    }
+  }
+
+  Future<Map<String, double>> _geocodeLocation(String address) async {
+    final normalized = address.trim().toLowerCase();
+    final cached = _geocodeCache[normalized];
+    if (cached != null) {
+      return cached;
+    }
+
+    final uri = Uri.https('nominatim.openstreetmap.org', '/search', {
+      'q': address,
+      'format': 'json',
+      'limit': '1',
+    });
+
+    final response = await http.get(uri, headers: {
+      'User-Agent': 'Voyager/1.0 (contact@yourdomain.com)',
+    });
+
+    if (response.statusCode != 200) {
+      throw Exception('Failed to geocode "$address": ${response.statusCode}');
+    }
+
+    final body = json.decode(response.body);
+    if (body is! List || body.isEmpty) {
+      throw Exception('No geocoding results for "$address"');
+    }
+
+    final first = body.first as Map<String, dynamic>;
+    final coords = {
+      'lat': double.parse(first['lat'] as String),
+      'lng': double.parse(first['lon'] as String),
+    };
+    _geocodeCache[normalized] = coords;
+    return coords;
+  }
 
   /// Get user info from users table
   Future<Map<String, dynamic>> _getUserInfo(String userId) async {

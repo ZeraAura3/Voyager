@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import '../l10n/app_localizations.dart';
 import '../services/ride_service.dart';
 import '../utils/user_helper.dart';
+import '../widgets/location_autocomplete_field.dart';
 
 class PostRideScreen extends StatefulWidget {
   const PostRideScreen({super.key});
@@ -24,6 +25,10 @@ class _PostRideScreenState extends State<PostRideScreen> {
 
   DateTime? _selectedDate;
   TimeOfDay? _selectedTime;
+  double? _fromLat;
+  double? _fromLng;
+  double? _toLat;
+  double? _toLng;
 
   // User's posted rides
   List<Map<String, dynamic>> _myRides = [];
@@ -69,6 +74,15 @@ class _PostRideScreenState extends State<PostRideScreen> {
       );
       return;
     }
+    if (_fromLat == null || _fromLng == null || _toLat == null || _toLng == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Please select both locations from suggestions'),
+          backgroundColor: Colors.red,
+        ),
+      );
+      return;
+    }
     if (_priceController.text.trim().isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
@@ -93,6 +107,10 @@ class _PostRideScreenState extends State<PostRideScreen> {
         availableSeats: _selectedSeats,
         pricePerSeat: double.tryParse(_priceController.text.trim()) ?? 0,
         genderPreference: _passengerPreference.toLowerCase(),
+        sourceLat: _fromLat,
+        sourceLng: _fromLng,
+        destLat: _toLat,
+        destLng: _toLng,
       );
 
       if (mounted) {
@@ -113,6 +131,10 @@ class _PostRideScreenState extends State<PostRideScreen> {
           _passengerPreference = 'Any';
           _selectedDate = null;
           _selectedTime = null;
+          _fromLat = null;
+          _fromLng = null;
+          _toLat = null;
+          _toLng = null;
         });
         _loadMyRides();
       }
@@ -166,27 +188,18 @@ class _PostRideScreenState extends State<PostRideScreen> {
               ),
             ),
             const SizedBox(height: 8),
-            TextField(
+            LocationAutocompleteField(
               controller: _fromController,
-              decoration: InputDecoration(
-                hintText: AppLocalizations.of(context)!.enterPickupLocation,
-                hintStyle: TextStyle(color: Colors.grey[400]),
-                prefixIcon:
-                    const Icon(Icons.location_on_outlined, color: Colors.grey),
-                border: OutlineInputBorder(
-                  borderRadius: BorderRadius.circular(12),
-                  borderSide: BorderSide(color: Colors.grey[300]!),
-                ),
-                enabledBorder: OutlineInputBorder(
-                  borderRadius: BorderRadius.circular(12),
-                  borderSide: BorderSide(color: Colors.grey[300]!),
-                ),
-                focusedBorder: OutlineInputBorder(
-                  borderRadius: BorderRadius.circular(12),
-                  borderSide:
-                      const BorderSide(color: Color(0xFF00B25E), width: 2),
-                ),
-              ),
+              hintText: AppLocalizations.of(context)!.enterPickupLocation,
+              onLocationSelected: (displayName, lat, lng) {
+                _fromController.text = displayName;
+                _fromLat = lat;
+                _fromLng = lng;
+              },
+              onCleared: () {
+                _fromLat = null;
+                _fromLng = null;
+              },
             ),
             const SizedBox(height: 20),
             Text(
@@ -198,27 +211,18 @@ class _PostRideScreenState extends State<PostRideScreen> {
               ),
             ),
             const SizedBox(height: 8),
-            TextField(
+            LocationAutocompleteField(
               controller: _toController,
-              decoration: InputDecoration(
-                hintText: AppLocalizations.of(context)!.enterDestination,
-                hintStyle: TextStyle(color: Colors.grey[400]),
-                prefixIcon:
-                    const Icon(Icons.location_on_outlined, color: Colors.grey),
-                border: OutlineInputBorder(
-                  borderRadius: BorderRadius.circular(12),
-                  borderSide: BorderSide(color: Colors.grey[300]!),
-                ),
-                enabledBorder: OutlineInputBorder(
-                  borderRadius: BorderRadius.circular(12),
-                  borderSide: BorderSide(color: Colors.grey[300]!),
-                ),
-                focusedBorder: OutlineInputBorder(
-                  borderRadius: BorderRadius.circular(12),
-                  borderSide:
-                      const BorderSide(color: Color(0xFF00B25E), width: 2),
-                ),
-              ),
+              hintText: AppLocalizations.of(context)!.enterDestination,
+              onLocationSelected: (displayName, lat, lng) {
+                _toController.text = displayName;
+                _toLat = lat;
+                _toLng = lng;
+              },
+              onCleared: () {
+                _toLat = null;
+                _toLng = null;
+              },
             ),
             const SizedBox(height: 20),
             Row(

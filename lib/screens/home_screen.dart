@@ -1,8 +1,5 @@
 // screens/home_screen.dart
-import 'dart:convert';
-import 'package:http/http.dart' as http;
 import 'package:flutter/material.dart';
-import 'package:supabase_flutter/supabase_flutter.dart';
 import 'post_ride_screen.dart';
 import 'profile_screen.dart';
 import 'requests_screen.dart';
@@ -11,6 +8,7 @@ import 'cab_services_screen.dart';
 import '../services/ride_service.dart';
 import '../utils/user_helper.dart';
 import '../l10n/app_localizations.dart';
+import '../widgets/location_autocomplete_field.dart';
 
 class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
@@ -96,11 +94,13 @@ class FindRideTab extends StatefulWidget {
 class _FindRideTabState extends State<FindRideTab> {
   String? _selectedFrom;
   String? _selectedTo;
+  double? _selectedFromLat;
+  double? _selectedFromLng;
+  double? _selectedToLat;
+  double? _selectedToLng;
+  final TextEditingController _fromController = TextEditingController();
+  final TextEditingController _toController = TextEditingController();
   final RideService _rideService = RideService();
-
-  // Common locations for the dropdowns
-  List<String> _locations = [];
-  bool _loadingLocations = true;
 
   // Filter options
   String? _selectedGender;
@@ -132,7 +132,6 @@ class _FindRideTabState extends State<FindRideTab> {
       await Future.wait([
         _loadAllRides(),
         _loadUserBookings(),
-        _loadLocations(), // Load locations using coordinates and Nominatim API
       ]);
     } catch (e) {
       if (mounted) {
@@ -144,81 +143,6 @@ class _FindRideTabState extends State<FindRideTab> {
     }
   }
 
-  Future<void> _loadLocations() async {
-    try {
-      // Step 1: Request endpoints (start/end) from the database using custom RPC
-      // NOTE: Run this SQL in Supabase because your geometry is a LineString:
-      // CREATE OR REPLACE FUNCTION get_route_endpoints()
-      // RETURNS TABLE (lat float, lon float) LANGUAGE sql AS $$
-      //   SELECT DISTINCT lat, lon FROM (
-      //     SELECT ST_Y(ST_StartPoint(route_geom::geometry)) as lat, ST_X(ST_StartPoint(route_geom::geometry)) as lon FROM routes
-      //     UNION
-      //     SELECT ST_Y(ST_EndPoint(route_geom::geometry)) as lat, ST_X(ST_EndPoint(route_geom::geometry)) as lon FROM routes
-      //   ) as subq;
-      // $$;
-      final coordinates =
-          await Supabase.instance.client.rpc('get_route_endpoints');
-
-      List<String> loadedLocations = [];
-
-      for (var coord in coordinates) {
-        final lat = coord['lat'] as double;
-        final lon = coord['lon'] as double;
-
-        // Step 2: Use Nominatim reverse geocoding API to parse coordinates into place names
-        final name = await _reverseGeocode(lat, lon);
-        if (name.isNotEmpty && !loadedLocations.contains(name)) {
-          loadedLocations.add(name);
-        }
-        // IMPORTANT: Add a 1100ms delay to satisfy Nominatim's strict Limit of 1 Request/Second
-        await Future.delayed(const Duration(milliseconds: 1100));
-      }
-
-      if (mounted) {
-        setState(() {
-          _locations = loadedLocations;
-          _loadingLocations = false;
-        });
-      }
-    } catch (e) {
-      debugPrint('Failed to load locations: $e');
-      if (mounted) {
-        setState(() {
-          // Fallback static locations if API fails
-          _locations = ['IIT Mandi (North Campus)', 'Mandi'];
-          _loadingLocations = false;
-        });
-      }
-    }
-  }
-
-  Future<String> _reverseGeocode(double lat, double lon) async {
-    try {
-      final url = Uri.parse(
-          'https://nominatim.openstreetmap.org/reverse?format=json&lat=$lat&lon=$lon');
-      // Setting a descriptive User Agent is mandatory to not get IP blocked by Nominatim OpenStreetMap limits
-      final response = await http.get(url, headers: {
-        'User-Agent': 'VoyagerApp/1.0 (B23394@students.iitmandi.ac.in)',
-      });
-
-      if (response.statusCode == 200) {
-        final data = json.decode(response.body);
-        final address = data['address'] as Map<String, dynamic>;
-
-        // Find most relevant name part
-        final locationName = address['city'] ??
-            address['town'] ??
-            address['village'] ??
-            address['suburb'] ??
-            data['name'] ??
-            '';
-        return locationName.toString();
-      }
-    } catch (e) {
-      debugPrint('Reverse Geocoding failed for $lat,$lon: $e');
-    }
-    return '';
-  }
 
   Future<void> _loadAllRides() async {
     try {
@@ -261,6 +185,10 @@ class _FindRideTabState extends State<FindRideTab> {
       final results = await _rideService.searchRides(
         fromLocation: _selectedFrom,
         toLocation: _selectedTo,
+        sourceLat: _selectedFromLat,
+        sourceLng: _selectedFromLng,
+        destLat: _selectedToLat,
+        destLng: _selectedToLng,
         maxPrice: _priceRange.end < 2000 ? _priceRange.end : null,
         minPrice: _priceRange.start > 0 ? _priceRange.start : null,
         genderPreference: _selectedGender,
@@ -292,6 +220,10 @@ class _FindRideTabState extends State<FindRideTab> {
       final results = await _rideService.searchRides(
         fromLocation: _selectedFrom,
         toLocation: _selectedTo,
+        sourceLat: _selectedFromLat,
+        sourceLng: _selectedFromLng,
+        destLat: _selectedToLat,
+        destLng: _selectedToLng,
         maxPrice: _priceRange.end < 2000 ? _priceRange.end : null,
         minPrice: _priceRange.start > 0 ? _priceRange.start : null,
         genderPreference: _selectedGender,
@@ -316,7 +248,13 @@ class _FindRideTabState extends State<FindRideTab> {
       _priceRange = const RangeValues(0, 2000);
       _selectedFrom = null;
       _selectedTo = null;
+      _selectedFromLat = null;
+      _selectedFromLng = null;
+      _selectedToLat = null;
+      _selectedToLng = null;
     });
+    _fromController.clear();
+    _toController.clear();
     _loadAllRides();
   }
 
@@ -366,98 +304,6 @@ class _FindRideTabState extends State<FindRideTab> {
     }
   }
 
-  void _showLocationDialog({required bool isFrom}) {
-    showDialog(
-      context: context,
-      builder: (context) {
-        final title = isFrom
-            ? AppLocalizations.of(context)!.fromWhere
-            : AppLocalizations.of(context)!.whereTo;
-        final selectedVal = isFrom ? _selectedFrom : _selectedTo;
-
-        return AlertDialog(
-          title:
-              Text(title, style: const TextStyle(fontWeight: FontWeight.bold)),
-          shape:
-              RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
-          content: SizedBox(
-            width: double.maxFinite,
-            child: _locations.isEmpty
-                ? const Center(
-                    child: Padding(
-                        padding: EdgeInsets.all(20),
-                        child: Text('No locations available yet.')))
-                : ListView.separated(
-                    shrinkWrap: true,
-                    itemCount: _locations.length,
-                    separatorBuilder: (context, index) =>
-                        const Divider(height: 1),
-                    itemBuilder: (context, index) {
-                      final location = _locations[index];
-                      final isSelected = selectedVal == location;
-                      final isDisabled = isFrom
-                          ? (_selectedTo == location)
-                          : (_selectedFrom == location);
-
-                      return ListTile(
-                        leading: Icon(
-                          isFrom
-                              ? Icons.trip_origin_rounded
-                              : Icons.location_on_rounded,
-                          color: isDisabled
-                              ? Colors.grey[300]
-                              : (isSelected
-                                  ? const Color(0xFF00B25E)
-                                  : Colors.grey[500]),
-                        ),
-                        title: Text(
-                          location,
-                          style: TextStyle(
-                            color: isDisabled
-                                ? Colors.grey[400]
-                                : (isSelected
-                                    ? const Color(0xFF00B25E)
-                                    : Theme.of(context)
-                                        .textTheme
-                                        .bodyLarge
-                                        ?.color),
-                            fontWeight:
-                                isSelected ? FontWeight.bold : FontWeight.w500,
-                          ),
-                        ),
-                        trailing: isSelected
-                            ? const Icon(Icons.check_circle,
-                                color: Color(0xFF00B25E))
-                            : null,
-                        enabled: !isDisabled,
-                        onTap: () {
-                          if (!isDisabled) {
-                            setState(() {
-                              if (isFrom) {
-                                _selectedFrom = location;
-                              } else {
-                                _selectedTo = location;
-                              }
-                            });
-                            Navigator.pop(context);
-                          }
-                        },
-                      );
-                    },
-                  ),
-          ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.pop(context),
-              child: Text(AppLocalizations.of(context)!.cancel ?? 'Cancel',
-                  style: const TextStyle(color: Colors.grey)),
-            ),
-          ],
-        );
-      },
-    );
-  }
-
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -492,98 +338,45 @@ class _FindRideTabState extends State<FindRideTab> {
                     ),
                   ),
                   const SizedBox(height: 20),
-                  _loadingLocations
-                      ? const Center(
-                          child: Padding(
-                              padding: EdgeInsets.all(12),
-                              child: CircularProgressIndicator()))
-                      : GestureDetector(
-                          onTap: () => _showLocationDialog(isFrom: true),
-                          child: Container(
-                            padding: const EdgeInsets.symmetric(
-                                vertical: 16, horizontal: 16),
-                            decoration: BoxDecoration(
-                              color: Theme.of(context).cardColor,
-                              borderRadius: BorderRadius.circular(16),
-                              border: Border.all(
-                                  color: Colors.grey[200]!, width: 1.5),
-                            ),
-                            child: Row(
-                              children: [
-                                Icon(Icons.trip_origin_rounded,
-                                    color: _selectedFrom != null
-                                        ? const Color(0xFF00B25E)
-                                        : Colors.grey[400]),
-                                const SizedBox(width: 12),
-                                Expanded(
-                                  child: Text(
-                                    _selectedFrom ??
-                                        AppLocalizations.of(context)!.fromWhere,
-                                    style: TextStyle(
-                                      color: _selectedFrom != null
-                                          ? Theme.of(context)
-                                              .textTheme
-                                              .bodyLarge
-                                              ?.color
-                                          : Colors.grey[500],
-                                      fontSize: 15,
-                                      fontWeight: _selectedFrom != null
-                                          ? FontWeight.w500
-                                          : FontWeight.normal,
-                                    ),
-                                  ),
-                                ),
-                                Icon(Icons.keyboard_arrow_down_rounded,
-                                    color: Colors.grey[500]),
-                              ],
-                            ),
-                          ),
-                        ),
+                  LocationAutocompleteField(
+                    controller: _fromController,
+                    hintText: AppLocalizations.of(context)!.fromWhere,
+                    prefixIcon: Icons.trip_origin_rounded,
+                    onLocationSelected: (displayName, lat, lng) {
+                      setState(() {
+                        _selectedFrom = displayName;
+                        _selectedFromLat = lat;
+                        _selectedFromLng = lng;
+                      });
+                    },
+                    onCleared: () {
+                      setState(() {
+                        _selectedFrom = null;
+                        _selectedFromLat = null;
+                        _selectedFromLng = null;
+                      });
+                    },
+                  ),
                   const SizedBox(height: 16),
-                  _loadingLocations
-                      ? const SizedBox()
-                      : GestureDetector(
-                          onTap: () => _showLocationDialog(isFrom: false),
-                          child: Container(
-                            padding: const EdgeInsets.symmetric(
-                                vertical: 16, horizontal: 16),
-                            decoration: BoxDecoration(
-                              color: Theme.of(context).cardColor,
-                              borderRadius: BorderRadius.circular(16),
-                              border: Border.all(
-                                  color: Colors.grey[200]!, width: 1.5),
-                            ),
-                            child: Row(
-                              children: [
-                                Icon(Icons.location_on_rounded,
-                                    color: _selectedTo != null
-                                        ? const Color(0xFF00B25E)
-                                        : Colors.grey[400]),
-                                const SizedBox(width: 12),
-                                Expanded(
-                                  child: Text(
-                                    _selectedTo ??
-                                        AppLocalizations.of(context)!.whereTo,
-                                    style: TextStyle(
-                                      color: _selectedTo != null
-                                          ? Theme.of(context)
-                                              .textTheme
-                                              .bodyLarge
-                                              ?.color
-                                          : Colors.grey[500],
-                                      fontSize: 15,
-                                      fontWeight: _selectedTo != null
-                                          ? FontWeight.w500
-                                          : FontWeight.normal,
-                                    ),
-                                  ),
-                                ),
-                                Icon(Icons.keyboard_arrow_down_rounded,
-                                    color: Colors.grey[500]),
-                              ],
-                            ),
-                          ),
-                        ),
+                  LocationAutocompleteField(
+                    controller: _toController,
+                    hintText: AppLocalizations.of(context)!.whereTo,
+                    prefixIcon: Icons.location_on_rounded,
+                    onLocationSelected: (displayName, lat, lng) {
+                      setState(() {
+                        _selectedTo = displayName;
+                        _selectedToLat = lat;
+                        _selectedToLng = lng;
+                      });
+                    },
+                    onCleared: () {
+                      setState(() {
+                        _selectedTo = null;
+                        _selectedToLat = null;
+                        _selectedToLng = null;
+                      });
+                    },
+                  ),
                   const SizedBox(height: 20),
                   Row(
                     children: [
@@ -719,7 +512,10 @@ class _FindRideTabState extends State<FindRideTab> {
                   itemCount: _searchResults.length,
                   itemBuilder: (context, index) {
                     final ride = _searchResults[index];
-                    return _buildRideResultCard(ride);
+                    return _buildRideResultCard(
+                      ride,
+                      showOverlapBadge: true,
+                    );
                   },
                 ),
             ],
@@ -839,7 +635,10 @@ class _FindRideTabState extends State<FindRideTab> {
     );
   }
 
-  Widget _buildRideResultCard(Map<String, dynamic> ride) {
+  Widget _buildRideResultCard(
+    Map<String, dynamic> ride, {
+    bool showOverlapBadge = false,
+  }) {
     final posterName = ride['poster_name'] ?? 'Unknown';
     final posterGender = (ride['poster_gender'] ?? '').toString();
     final from = ride['from_location'] ?? '';
@@ -848,6 +647,12 @@ class _FindRideTabState extends State<FindRideTab> {
     final time = ride['ride_time'] ?? '';
     final seats = ride['available_seats'] ?? 0;
     final price = (ride['price_per_seat'] as num?)?.toDouble() ?? 0;
+    final overlapScoreRaw = ride['overlap_score'];
+    final overlapScore = overlapScoreRaw is num
+      ? overlapScoreRaw.toDouble()
+      : double.tryParse(overlapScoreRaw?.toString() ?? '');
+    final hasOverlapScore =
+      showOverlapBadge && overlapScore != null && overlapScore > 0;
 
     return Container(
       margin: const EdgeInsets.only(bottom: 12),
@@ -892,43 +697,52 @@ class _FindRideTabState extends State<FindRideTab> {
                   ),
                 ],
               ),
-              if (posterGender.isNotEmpty)
-                Container(
-                  padding:
-                      const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                  decoration: BoxDecoration(
-                    color: posterGender.toLowerCase() == 'female'
-                        ? Colors.pink.withOpacity(0.1)
-                        : Colors.blue.withOpacity(0.1),
-                    borderRadius: BorderRadius.circular(8),
-                  ),
-                  child: Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      Icon(
-                        posterGender.toLowerCase() == 'female'
-                            ? Icons.female
-                            : Icons.male,
-                        size: 14,
+              Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  if (hasOverlapScore) ...[
+                    _buildMatchBadge(overlapScore),
+                    if (posterGender.isNotEmpty) const SizedBox(width: 8),
+                  ],
+                  if (posterGender.isNotEmpty)
+                    Container(
+                      padding:
+                          const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                      decoration: BoxDecoration(
                         color: posterGender.toLowerCase() == 'female'
-                            ? Colors.pink
-                            : Colors.blue,
+                            ? Colors.pink.withOpacity(0.1)
+                            : Colors.blue.withOpacity(0.1),
+                        borderRadius: BorderRadius.circular(8),
                       ),
-                      const SizedBox(width: 4),
-                      Text(
-                        posterGender[0].toUpperCase() +
-                            posterGender.substring(1),
-                        style: TextStyle(
-                          fontSize: 12,
-                          fontWeight: FontWeight.w500,
-                          color: posterGender.toLowerCase() == 'female'
-                              ? Colors.pink
-                              : Colors.blue,
-                        ),
+                      child: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Icon(
+                            posterGender.toLowerCase() == 'female'
+                                ? Icons.female
+                                : Icons.male,
+                            size: 14,
+                            color: posterGender.toLowerCase() == 'female'
+                                ? Colors.pink
+                                : Colors.blue,
+                          ),
+                          const SizedBox(width: 4),
+                          Text(
+                            posterGender[0].toUpperCase() +
+                                posterGender.substring(1),
+                            style: TextStyle(
+                              fontSize: 12,
+                              fontWeight: FontWeight.w500,
+                              color: posterGender.toLowerCase() == 'female'
+                                  ? Colors.pink
+                                  : Colors.blue,
+                            ),
+                          ),
+                        ],
                       ),
-                    ],
-                  ),
-                ),
+                    ),
+                ],
+              ),
             ],
           ),
           const SizedBox(height: 12),
@@ -1012,6 +826,33 @@ class _FindRideTabState extends State<FindRideTab> {
             ),
           ),
         ],
+      ),
+    );
+  }
+
+  Widget _buildMatchBadge(double? score) {
+    final value = score ?? 0;
+    final percent = value.clamp(0, 100).round();
+    final isHigh = percent >= 80;
+    final isMedium = percent >= 60;
+
+    final color = isHigh
+        ? const Color(0xFF00B25E)
+        : (isMedium ? Colors.orange : Colors.grey);
+
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+      decoration: BoxDecoration(
+        color: color.withOpacity(0.1),
+        borderRadius: BorderRadius.circular(8),
+      ),
+      child: Text(
+        'Match $percent%',
+        style: TextStyle(
+          fontSize: 12,
+          fontWeight: FontWeight.w600,
+          color: color,
+        ),
       ),
     );
   }
@@ -1376,6 +1217,8 @@ class _FindRideTabState extends State<FindRideTab> {
 
   @override
   void dispose() {
+    _fromController.dispose();
+    _toController.dispose();
     super.dispose();
   }
 }
