@@ -1,139 +1,148 @@
-# Voyager 🚗
+# Voyager
 
-A student ride-sharing platform built with Flutter, designed to connect students who need rides with those offering them.
+Voyager is a Flutter app for a student community to coordinate travel and exchanges.
 
-## Overview
+## What you can do
 
-Voyager is a comprehensive ride-sharing application that enables students to:
-- Request rides from their community
-- Offer rides to fellow students
-- Access cab services for convenient transportation
-- Manage ride requests and bookings
+- **Find / Post rides**: Browse available rides, post a ride, and book seats.
+- **Requests & bookings**: Track ride requests and active bookings.
+- **Trades (tickets)**: Create and browse trade posts (swap / buy / sell) with optional images.
+- **Cab services**: Browse drivers/cab listings.
 
-## Features
+## Tech stack
 
-- **Authentication System**: Secure user registration and login with Firebase Authentication
-- **Ride Management**: Post and request rides with detailed information
-- **Cab Services**: Access to cab booking services
-- **User Profiles**: Manage personal information and preferences
-- **Dark/Light Theme**: Toggle between themes for personalized experience
-- **Real-time Updates**: Firebase Firestore integration for live data synchronization
+- **Flutter / Dart** (Dart SDK: `>=3.0.0 <4.0.0`)
+- **Firebase**: Authentication + Firestore (profiles / role data)
+- **Supabase**: Postgres + Storage (rides, trades, history, images)
+- **State**: `provider`
+- **Localization**: Flutter gen-l10n (`lib/l10n`) + `intl`
+- **Networking**: `http` (used for location search)
 
-## Tech Stack
-
-- **Framework**: Flutter (SDK 3.0.0+)
-- **Backend**: Firebase
-  - Firebase Authentication
-  - Cloud Firestore
-- **State Management**: Provider
-- **Local Storage**: SharedPreferences
-- **Platforms Supported**: Android, iOS, Web, Windows, Linux, macOS
-
-## Project Structure
+## Project structure (high level)
 
 ```
 lib/
-├── main.dart                      # Application entry point
-├── models/
-│   └── user_model.dart           # User data model
-├── screens/
-│   ├── login_screen.dart         # User authentication
-│   ├── signup_screen.dart        # User registration
-│   ├── home_screen.dart          # Main dashboard
-│   ├── post_ride_screen.dart     # Create ride offers
-│   ├── requests_screen.dart      # View ride requests
-│   └── cab_services_screen.dart  # Cab booking interface
-└── theme/
-    ├── app_theme.dart            # Theme definitions
-    └── theme_provider.dart       # Theme state management
+  main.dart
+  config/
+    supabase_config.dart
+  l10n/
+  models/
+  screens/
+    home_screen.dart
+    login_screen.dart
+    signup_screen.dart
+    driver_home_screen.dart
+  services/
+  theme/
+  utils/
+  widgets/
 ```
 
-## Getting Started
+## Getting started
 
 ### Prerequisites
 
-- Flutter SDK (3.0.0 or higher)
-- Dart SDK
-- Firebase account
-- Android Studio / Xcode (for mobile development)
+- Flutter SDK installed
+- A **Firebase project** (Auth + Firestore)
+- A **Supabase project** (Database + Storage)
 
-### Installation
+### 1) Install dependencies
 
-1. **Clone the repository**
-   ```bash
-   git clone <repository-url>
-   cd voyager
-   ```
+```bash
+flutter pub get
+```
 
-2. **Install dependencies**
-   ```bash
-   flutter pub get
-   ```
+### 2) Firebase setup
 
-3. **Firebase Setup**
-   - Create a new Firebase project at [Firebase Console](https://console.firebase.google.com/)
-   - Add your app to the Firebase project (Android/iOS/Web)
-   - Download configuration files:
-     - `google-services.json` for Android (place in `android/app/`)
-     - `GoogleService-Info.plist` for iOS (place in `ios/Runner/`)
-   - Enable Authentication and Firestore in Firebase Console
+1. Create a Firebase project in the Firebase Console.
+2. Enable **Email/Password** authentication.
+3. Create / enable **Cloud Firestore**.
+4. Configure platform files:
+   - Android: place `google-services.json` in `android/app/`
+   - iOS: place `GoogleService-Info.plist` in `ios/Runner/`
+5. Update Firebase options if needed:
+   - `lib/firebase_options.dart` contains the platform `FirebaseOptions` used on app startup.
+   - If you plan to run on **Web**, make sure the `web` config has a real `appId`.
 
-4. **Run the application**
-   ```bash
-   flutter run
-   ```
+### 3) Supabase setup
 
-### Build for Production
+1. Create a Supabase project.
+2. Run the SQL migration:
+   - Open `supabase_migration.sql` (repo root)
+   - Paste into Supabase Dashboard → SQL Editor → New query → Run
+3. Configure Supabase client keys:
+   - Update `lib/config/supabase_config.dart` with your Supabase **Project URL** and **Anon key**.
+4. Create a Storage bucket for ticket images:
+   - Bucket name: `ticket-images`
 
-**Android:**
+> Note: The Supabase anon key is intended for client apps. Protect your data with RLS/policies.
+
+### 4) Run
+
+```bash
+flutter run
+```
+
+## Testing
+
+```bash
+flutter test
+flutter analyze
+```
+
+## Build
+
+```bash
+# Android
+flutter build apk --release
+
+# iOS
+flutter build ios --release
+
+# Web
+flutter build web --release
+
+# Windows
+flutter build windows --release
+```
+
+## APK
+
+To generate an installable Android APK:
+
 ```bash
 flutter build apk --release
 ```
 
-**iOS:**
-```bash
-flutter build ios --release
-```
+The output will be at:
 
-**Web:**
-```bash
-flutter build web --release
-```
+- `build/app/outputs/flutter-apk/app-release.apk`
 
-**Windows:**
-```bash
-flutter build windows --release
-```
+For GitHub distribution, the recommended approach is to upload the APK to **GitHub Releases** (instead of committing build artifacts to the repository).
 
-## Dependencies
+## Localization
 
-- `firebase_core: ^4.4.0` - Firebase core functionality
-- `firebase_auth: ^6.1.4` - User authentication
-- `cloud_firestore: ^6.1.2` - Real-time database
-- `provider: ^6.1.1` - State management
-- `shared_preferences: ^2.2.2` - Local data persistence
-- `cupertino_icons: ^1.0.8` - iOS style icons
+- ARB files live in `lib/l10n/`
+- Generated localization code is enabled via `flutter: generate: true` in `pubspec.yaml`
+- Supported locales are declared in `lib/main.dart`
 
-## Configuration
+## Location search
 
-The app uses Firebase for backend services. Ensure you have:
-1. Valid `google-services.json` in the Android app directory
-2. Valid `GoogleService-Info.plist` in the iOS Runner directory
-3. Firebase Authentication enabled
-4. Cloud Firestore database created
+Voyager uses the Nominatim (OpenStreetMap) API for location suggestions.
+
+## Troubleshooting
+
+- **“User data not found” after login**: the app expects a profile document in Firestore under either `students/<uid>` or `drivers/<uid>`.
+- **No rides/trades showing / errors on first load**: confirm you ran `supabase_migration.sql` and updated `lib/config/supabase_config.dart`.
+- **Image upload fails**: create the Supabase Storage bucket `ticket-images` and ensure your Storage policies allow the intended access.
 
 ## Contributing
 
-Contributions are welcome! Please feel free to submit a Pull Request.
+PRs are welcome. If you’re changing data models, update both:
+
+- the Supabase migration (`supabase_migration.sql`) and
+- the corresponding Dart model/service code.
 
 ## License
 
-This project is private and not published to pub.dev.
-
-## Support
-
-For support, please open an issue in the repository or contact the development team.
-
----
-
-Built with ❤️ using Flutter
+This project is not published to pub.dev.
